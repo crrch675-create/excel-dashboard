@@ -2456,10 +2456,10 @@ _SIM_GAP_COLS = frozenset({5, 9, 17, 21})
 # 太字合計行のオフセット (各グループ base からの相対行)
 _SIM_TOTAL_OFFSETS = frozenset({10, 12})
 
-# col_start列 (各ブロックの先頭列 = ラベル列として扱う)
+# col_start列 (各ブロックの先頭列 = ブロック内ラベル列)
 _SIM_LABEL_COLS = frozenset(_SIM_HBLOCK_COL_STARTS)  # {2,6,10,14,18,22}
 
-# スプレッドシート列1-24 → st.columns インデックスの幅リスト
+# スプレッドシート列1-24 → st.columns 幅リスト
 def _sim_col_widths() -> list:
     w = []
     for c in range(1, 25):
@@ -2468,7 +2468,7 @@ def _sim_col_widths() -> list:
         elif c in _SIM_GAP_COLS:
             w.append(0.12)  # ギャップ列
         elif c in _SIM_LABEL_COLS:
-            w.append(0.35)  # ブロック内ラベル列
+            w.append(0.55)  # ブロック内ラベル列（横表示に十分な幅）
         else:
             w.append(0.72)  # データ列
     return w
@@ -2477,38 +2477,37 @@ _SIM_COL_W = _sim_col_widths()
 _SIM_SUB_RIGHT = ['―', '増減', '削減率', '倍率', '倍率', '倍率']
 
 
-def _render_sim_sheet(raw: dict, calc_res: dict) -> None:
-    """スプレッドシートの行・列構造をそのまま再現して描画する。"""
+def _render_sim_header_rows(raw: dict) -> None:
+    """ブロック名ヘッダー行2行を描画する（各グループの先頭で呼ぶ）。"""
 
     def _pos(col: int) -> int:
-        return col - 1  # spreadsheet col(1-24) → st.columns 0-indexed
+        return col - 1
 
     def _gap_cells(cols_obj):
         for gc in _SIM_GAP_COLS:
             cols_obj[_pos(gc)].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
 
-    # ── ヘッダー行1: ブロック名 ──
+    # ヘッダー行1: ブロック名
     h1 = st.columns(_SIM_COL_W)
     h1[_pos(1)].markdown(f'<div class="np-hdr">{_he("項目")}</div>', unsafe_allow_html=True)
     _gap_cells(h1)
     for cs in _SIM_LABEL_COLS:
         h1[_pos(cs)].markdown('<div class="np-hdr">&nbsp;</div>', unsafe_allow_html=True)
-    for bi, (cs, bname, color) in enumerate(zip(_SIM_HBLOCK_COL_STARTS, _SIM_HBLOCK_NAMES, _SIM_HBLOCK_COLORS)):
+    for cs, bname, color in zip(_SIM_HBLOCK_COL_STARTS, _SIM_HBLOCK_NAMES, _SIM_HBLOCK_COLORS):
         for dc in (1, 2):
-            c = cs + dc
             text = _he(bname) if dc == 1 else '&nbsp;'
-            h1[_pos(c)].markdown(
+            h1[_pos(cs + dc)].markdown(
                 f'<div style="background:{color};color:white;text-align:center;'
                 f'padding:5px 3px;font-size:.75rem;font-weight:700;min-height:24px;">{text}</div>',
                 unsafe_allow_html=True)
 
-    # ── ヘッダー行2: 金額 / 増減等 ──
+    # ヘッダー行2: 金額 / 増減等
     h2 = st.columns(_SIM_COL_W)
     h2[_pos(1)].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
     _gap_cells(h2)
     for cs in _SIM_LABEL_COLS:
         h2[_pos(cs)].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
-    for bi, (cs, color, rl) in enumerate(zip(_SIM_HBLOCK_COL_STARTS, _SIM_HBLOCK_COLORS, _SIM_SUB_RIGHT)):
+    for cs, color, rl in zip(_SIM_HBLOCK_COL_STARTS, _SIM_HBLOCK_COLORS, _SIM_SUB_RIGHT):
         h2[_pos(cs + 1)].markdown(
             f'<div style="background:{color}22;color:{color};text-align:center;'
             f'padding:2px 3px;font-size:.65rem;font-weight:600;">{_he("金額")}</div>',
@@ -2518,63 +2517,96 @@ def _render_sim_sheet(raw: dict, calc_res: dict) -> None:
             f'padding:2px 3px;font-size:.65rem;font-weight:600;">{_he(rl)}</div>',
             unsafe_allow_html=True)
 
-    # ── データ行 (行3-51) ──
-    _base_set = set(_SIM_VGROUP_BASE_ROWS)
 
-    for r in range(3, 52):
-        row_data = raw.get(r, {})
+def _render_sim_sheet(raw: dict, calc_res: dict) -> None:
+    """スプレッドシートの行・列構造をそのまま再現して描画する。"""
 
-        # 空行チェック
-        has_content = any(
-            row_data.get(c) is not None and str(row_data.get(c, '')).strip() not in ('', '#')
-            and not str(row_data.get(c, '')).startswith('#')
-            for c in range(1, 25)
-        )
-        if not has_content:
-            st.markdown('<div style="height:5px"></div>', unsafe_allow_html=True)
-            continue
+    def _pos(col: int) -> int:
+        return col - 1
 
-        # is_total: 粗利益・経常利益行
-        is_total = any(r == b + off for b in _SIM_VGROUP_BASE_ROWS for off in _SIM_TOTAL_OFFSETS)
+    def _gap_cells(cols_obj):
+        for gc in _SIM_GAP_COLS:
+            cols_obj[_pos(gc)].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
 
-        label_val = row_data.get(1)
-        label_str = str(label_val).strip() if label_val is not None else ''
+    # グループごとに: グループラベル行 → ヘッダー行2行 → データ行
+    for gi, base in enumerate(_SIM_VGROUP_BASE_ROWS):
+        # グループ間の区切り線
+        if gi > 0:
+            st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-        rc = st.columns(_SIM_COL_W)
+        # base行: グループラベル (col1 の値を読む)
+        base_label = str(raw.get(base, {}).get(1) or '').strip()
+        if base_label:
+            st.markdown(f'<div class="np-section">{_he(base_label)}</div>', unsafe_allow_html=True)
 
-        # 項目ラベル列
-        if label_str:
-            lbl_css = 'np-total' if is_total else 'np-sub'
-            rc[_pos(1)].markdown(f'<div class="{lbl_css}">{_he(label_str)}</div>', unsafe_allow_html=True)
-        else:
-            rc[_pos(1)].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
+        # ヘッダー行2行 (block名 / 金額・増減等)
+        _render_sim_header_rows(raw)
 
-        # ギャップ列
-        _gap_cells(rc)
+        # base+1 行はスプレッドシートのヘッダー繰り返し行 → スキップ
+        skip_row = base + 1
 
-        # データ列 (cols 2-24)
-        for c in range(2, 25):
-            if c in _SIM_GAP_COLS:
+        # 次グループの base (なければ 52)
+        next_base = _SIM_VGROUP_BASE_ROWS[gi + 1] if gi + 1 < len(_SIM_VGROUP_BASE_ROWS) else 52
+
+        # データ行: base+2 ～ next_base-1
+        for r in range(base + 2, next_base):
+            if r == skip_row:
                 continue
-            v = row_data.get(c)
-            v_str = str(v).strip() if v is not None else ''
+            row_data = raw.get(r, {})
 
-            if c in _SIM_LABEL_COLS:
-                # ブロック内ラベル列: テキストがあれば表示、なければ空
-                if v_str and not v_str.startswith('#'):
-                    rc[_pos(c)].markdown(f'<div class="np-item">{_he(v_str)}</div>', unsafe_allow_html=True)
-                else:
-                    rc[_pos(c)].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
-            elif (r, c) in _SIM_ALL_INPUT_CELLS:
-                inp_key = f'sim_inp_{r}_{c}'
-                rc[_pos(c)].text_input('', key=inp_key, label_visibility='collapsed',
-                                       on_change=_save_to_excel_sim, args=(r, c, inp_key))
-            elif v_str.startswith('#') or v_str == '':
-                val_css = 'np-val-total' if is_total else 'np-val'
-                rc[_pos(c)].markdown(f'<div class="{val_css}"></div>', unsafe_allow_html=True)
+            # 空行チェック
+            has_content = any(
+                row_data.get(c) is not None
+                and str(row_data.get(c, '')).strip() not in ('', )
+                and not str(row_data.get(c, '')).startswith('#')
+                for c in range(1, 25)
+            )
+            if not has_content:
+                st.markdown('<div style="height:5px"></div>', unsafe_allow_html=True)
+                continue
+
+            is_total = any(r == base + off for off in _SIM_TOTAL_OFFSETS)
+
+            label_val = row_data.get(1)
+            label_str = str(label_val).strip() if label_val is not None else ''
+
+            rc = st.columns(_SIM_COL_W)
+
+            # 項目ラベル列
+            if label_str:
+                lbl_css = 'np-total' if is_total else 'np-sub'
+                rc[_pos(1)].markdown(f'<div class="{lbl_css}">{_he(label_str)}</div>', unsafe_allow_html=True)
             else:
-                val_css = 'np-val-total' if is_total else 'np-val'
-                rc[_pos(c)].markdown(f'<div class="{val_css}">{_fv_s(v)}</div>', unsafe_allow_html=True)
+                rc[_pos(1)].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
+
+            _gap_cells(rc)
+
+            # データ列 (cols 2-24)
+            for c in range(2, 25):
+                if c in _SIM_GAP_COLS:
+                    continue
+                v = row_data.get(c)
+                v_str = str(v).strip() if v is not None else ''
+
+                if c in _SIM_LABEL_COLS:
+                    if v_str and not v_str.startswith('#'):
+                        rc[_pos(c)].markdown(
+                            f'<div style="background:#eff3f8;color:{NAVY};font-size:.75rem;'
+                            f'font-weight:600;padding:2px 4px;min-height:22px;display:flex;'
+                            f'align-items:center;white-space:nowrap;overflow:hidden;">'
+                            f'{_he(v_str)}</div>', unsafe_allow_html=True)
+                    else:
+                        rc[_pos(c)].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
+                elif (r, c) in _SIM_ALL_INPUT_CELLS:
+                    inp_key = f'sim_inp_{r}_{c}'
+                    rc[_pos(c)].text_input('', key=inp_key, label_visibility='collapsed',
+                                           on_change=_save_to_excel_sim, args=(r, c, inp_key))
+                elif v_str == '' or v_str.startswith('#'):
+                    val_css = 'np-val-total' if is_total else 'np-val'
+                    rc[_pos(c)].markdown(f'<div class="{val_css}"></div>', unsafe_allow_html=True)
+                else:
+                    val_css = 'np-val-total' if is_total else 'np-val'
+                    rc[_pos(c)].markdown(f'<div class="{val_css}">{_fv_s(v)}</div>', unsafe_allow_html=True)
 
 
 def _render_sim_tab() -> None:

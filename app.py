@@ -2225,7 +2225,12 @@ _NE_INPUT_CELLS = frozenset([
 ])
 _NE_PCT_COLS = frozenset([4, 6, 8, 10, 12])
 _NE_PCT_ROWS_VALS = frozenset([17, 25, 33])
-_NE_COL_W = [1.3, 0.7, 0.45, 0.7, 0.45, 0.7, 0.45, 0.7, 0.45, 0.7, 0.45]
+# セパレータ列(0.04)をC,E,G,I,K列の直前に挿入した16列構成
+# 0:項目 1:sep 2:C 3:D 4:sep 5:E 6:F 7:sep 8:G 9:H 10:sep 11:I 12:J 13:sep 14:K 15:L
+_NE_COL_W = [1.3, 0.04, 0.66, 0.45, 0.04, 0.66, 0.45, 0.04, 0.66, 0.45, 0.04, 0.66, 0.45, 0.04, 0.66, 0.45]
+_NE_SEP_INDICES = {1, 4, 7, 10, 13}
+# spreadsheet col → st.columns index
+_NE_COL_IDX = {3:2, 4:3, 5:5, 6:6, 7:8, 8:9, 9:11, 10:12, 11:14, 12:15}
 _NE_S1 = [
     (3,  '売上',     False),
     (4,  '変動費',   False),
@@ -2303,11 +2308,16 @@ def calc_ne_from_state(raw: dict, formulas: dict) -> dict:
     return res
 
 
+_NE_SEP_DIV = '<div style="border-right:2px solid rgba(26,58,92,0.35);min-height:22px;"></div>'
+
 def render_ne_interactive(calc_res: dict) -> None:
     def _render_hdr() -> None:
         hdr = st.columns(_NE_COL_W)
         hdr[0].markdown(f'<div class="yp-hdr">{_he("項目")}</div>', unsafe_allow_html=True)
-        for lbl, ui_i in [('現在', 1), ('10%増販', 3), ('10%値上げ', 5), ('15%値上げ', 7), ('20%値上げ', 9)]:
+        for si in _NE_SEP_INDICES:
+            hdr[si].markdown(_NE_SEP_DIV, unsafe_allow_html=True)
+        # ラベル列: セパレータの次の列(2,5,8,11,14)にブロック名
+        for lbl, ui_i in [('現在', 2), ('10%増販', 5), ('10%値上げ', 8), ('15%値上げ', 11), ('20%値上げ', 14)]:
             hdr[ui_i].markdown(f'<div class="yp-hdr-yr">{_he(lbl)}</div>', unsafe_allow_html=True)
             hdr[ui_i + 1].markdown(f'<div class="yp-hdr">&nbsp;</div>', unsafe_allow_html=True)
 
@@ -2315,7 +2325,9 @@ def render_ne_interactive(calc_res: dict) -> None:
         rc = st.columns(_NE_COL_W)
         css = 'mp-sub-total' if is_total else 'yp-item'
         rc[0].markdown(f'<div class="{css}">{_he(lbl)}</div>', unsafe_allow_html=True)
-        for c, ui_i in [(3,1),(4,2),(5,3),(6,4),(7,5),(8,6),(9,7),(10,8),(11,9),(12,10)]:
+        for si in _NE_SEP_INDICES:
+            rc[si].markdown(_NE_SEP_DIV, unsafe_allow_html=True)
+        for c, ui_i in _NE_COL_IDX.items():
             is_pct = _ne_is_pct(r, c)
             is_inp = (r, c) in _NE_INPUT_CELLS
             disp = _fv_ne(calc_res.get((r, c)), is_pct)

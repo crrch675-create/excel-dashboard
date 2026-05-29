@@ -2010,10 +2010,14 @@ def render_cf_interactive(raw: dict, calc_res: dict) -> None:
         'item':     ('yp-section',   'yp-item'),
     }
 
+    _CF_DIVIDER_BEFORE = {59, 75, 83, 92}
+
     _sentinel = object()
     prev_sec: object = _sentinel
 
     for (section, label, row, is_input, style) in _CF_ITEMS:
+        if row in _CF_DIVIDER_BEFORE:
+            st.markdown('<hr style="border:none;border-top:1.5px solid #b8c8de;margin:2px 0;">', unsafe_allow_html=True)
         show_sec = section != prev_sec
         prev_sec = section
 

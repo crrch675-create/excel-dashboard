@@ -19,11 +19,11 @@ import time as _time
 _OrigGSheetWS = gsheets.GSheetWS  # モンキーパッチ前に保存
 
 _SHEETS_CFG = [
-    ('年次計画',                  True, True ),
-    ('月次計画',                  True, False),
-    ('値上げ効果計算表',           True, False),
-    ('収益構造シミュレーション ', True, False),
-    ('ロジック',                  True, True ),
+    ('年次計画',                  True, True),
+    ('月次計画',                  True, True),
+    ('値上げ効果計算表',           True, True),
+    ('収益構造シミュレーション ', True, True),
+    ('ロジック',                  True, True),
 ]
 
 
@@ -1020,7 +1020,7 @@ def _save_to_excel_monthly(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('月次計画', row_idx, col_idx, val)
         gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
-        load_monthly_full.clear()
+        _recalc_monthly_local()
     except Exception:
         pass
 
@@ -1375,6 +1375,149 @@ def _recalc_nenji_local() -> None:
     load_sales.clear()
 
 
+def _recalc_ne_local() -> None:
+    """値上げ効果計算表の数式セルをローカルで即時評価する。"""
+    store = _get_store()
+    with store['lock']:
+        f_cache = {r: dict(c) for r, c in store['data'].get('値上げ効果計算表_f', {}).items()}
+        v_cache = {r: dict(c) for r, c in store['data'].get('値上げ効果計算表_v', {}).items()}
+
+    coord: dict[str, float] = {}
+    for r in range(2, 34):
+        for c in range(2, 13):
+            addr = gsheets.get_column_letter(c) + str(r)
+            if (r, c) in _NE_INPUT_CELLS:
+                raw = str(st.session_state.get(f'ne_inp_{r}_{c}', '0')).replace(',', '').replace('%', '')
+                try:
+                    coord[addr] = float(raw)
+                except Exception:
+                    coord[addr] = 0.0
+            else:
+                v = v_cache.get(r, {}).get(c)
+                try:
+                    coord[addr] = float(v) if v is not None else 0.0
+                except Exception:
+                    coord[addr] = 0.0
+
+    for _ in range(2):
+        for r in range(2, 34):
+            for c in range(2, 13):
+                if (r, c) in _NE_INPUT_CELLS:
+                    continue
+                formula = f_cache.get(r, {}).get(c)
+                if isinstance(formula, str) and formula.startswith('='):
+                    res = _eval_formula(formula, coord)
+                    if res is not None:
+                        addr = gsheets.get_column_letter(c) + str(r)
+                        coord[addr] = res
+                        _cache_set('値上げ効果計算表', r, c, res)
+
+    load_ne_full.clear()
+
+
+def _recalc_sim_local() -> None:
+    """収益構造シミュレーションの数式セルをローカルで即時評価する。"""
+    store = _get_store()
+    with store['lock']:
+        f_cache = {r: dict(c) for r, c in store['data'].get('収益構造シミュレーション _f', {}).items()}
+        v_cache = {r: dict(c) for r, c in store['data'].get('収益構造シミュレーション _v', {}).items()}
+
+    coord: dict[str, float] = {}
+    for r in range(1, 52):
+        for c in range(1, 25):
+            addr = gsheets.get_column_letter(c) + str(r)
+            if (r, c) in _SIM_ALL_INPUT_CELLS:
+                raw = str(st.session_state.get(f'sim_inp_{r}_{c}', '0')).replace(',', '')
+                try:
+                    coord[addr] = float(raw)
+                except Exception:
+                    coord[addr] = 0.0
+            else:
+                v = v_cache.get(r, {}).get(c)
+                try:
+                    coord[addr] = float(v) if v is not None else 0.0
+                except Exception:
+                    coord[addr] = 0.0
+
+    for _ in range(2):
+        for r in range(1, 52):
+            for c in range(1, 25):
+                if (r, c) in _SIM_ALL_INPUT_CELLS:
+                    continue
+                formula = f_cache.get(r, {}).get(c)
+                if isinstance(formula, str) and formula.startswith('='):
+                    res = _eval_formula(formula, coord)
+                    if res is not None:
+                        addr = gsheets.get_column_letter(c) + str(r)
+                        coord[addr] = res
+                        _cache_set(_SIM_SHEET, r, c, res)
+
+    load_sim_full.clear()
+
+
+def _recalc_monthly_local() -> None:
+    """月次計画の数式セルをローカルで即時評価する。"""
+    store = _get_store()
+    with store['lock']:
+        f_cache = {r: dict(c) for r, c in store['data'].get('月次計画_f', {}).items()}
+        v_cache = {r: dict(c) for r, c in store['data'].get('月次計画_v', {}).items()}
+
+    _pct_rows = {113, 125, 137}
+
+    coord: dict[str, float] = {}
+    for r in range(4, 166):
+        for c in range(2, 20):
+            addr = gsheets.get_column_letter(c) + str(r)
+            is_mo_inp  = r in _MO_INPUT_ROWS and c in _MO_DATA_COLS
+            is_cf_inp  = r in _CF_INPUT_ROWS and c in _MO_DATA_COLS
+            is_sp_inp  = r in _SP_INPUT_ROWS and c in _MO_DATA_COLS
+            if is_mo_inp:
+                raw = str(st.session_state.get(f'mo_inp_{r}_{c}', '0')).replace(',', '')
+                try:
+                    coord[addr] = float(raw)
+                except Exception:
+                    coord[addr] = 0.0
+            elif is_cf_inp:
+                raw = str(st.session_state.get(f'cf_inp_{r}_{c}', '0')).replace(',', '')
+                try:
+                    coord[addr] = float(raw)
+                except Exception:
+                    coord[addr] = 0.0
+            elif is_sp_inp:
+                raw = str(st.session_state.get(f'sp_inp_{r}_{c}', '0')).replace(',', '').replace('%', '')
+                try:
+                    fv = float(raw)
+                    coord[addr] = fv / 100.0 if r in _pct_rows and fv > 1.0 else fv
+                except Exception:
+                    coord[addr] = 0.0
+            else:
+                v = v_cache.get(r, {}).get(c)
+                try:
+                    coord[addr] = float(v) if v is not None else 0.0
+                except Exception:
+                    coord[addr] = 0.0
+
+    for _ in range(2):
+        for r in range(4, 166):
+            for c in range(2, 20):
+                is_inp = (
+                    (r in _MO_INPUT_ROWS and c in _MO_DATA_COLS) or
+                    (r in _CF_INPUT_ROWS and c in _MO_DATA_COLS) or
+                    (r in _SP_INPUT_ROWS and c in _MO_DATA_COLS)
+                )
+                if is_inp:
+                    continue
+                formula = f_cache.get(r, {}).get(c)
+                if isinstance(formula, str) and formula.startswith('='):
+                    res = _eval_formula(formula, coord)
+                    if res is not None:
+                        addr = gsheets.get_column_letter(c) + str(r)
+                        coord[addr] = res
+                        _cache_set('月次計画', r, c, res)
+
+    load_monthly_full.clear()
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ダッシュボード用関数
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1407,7 +1550,8 @@ tab1, tab_nenji, tab_monthly, tab_ne, tab_sim, tab2 = st.tabs(["📊　社長用
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # タブ①: 社長用ダッシュボード
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-with tab1:
+@st.fragment
+def _render_tab1():
     st.markdown("""
     <div class="dash-header">
         <h1>📊 経営管理ダッシュボード</h1>
@@ -1472,7 +1616,11 @@ with tab1:
             for _yr in year_list:
                 for _it in item_list:
                     st.session_state.pop(f"inp_{_yr}_{_it}", None)
-            st.rerun()
+            st.rerun(scope="app")
+
+
+with tab1:
+    _render_tab1()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1597,7 +1745,7 @@ def _save_to_excel_cf(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('月次計画', row_idx, col_idx, val)
         gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
-        load_monthly_full.clear()
+        _recalc_monthly_local()
     except Exception:
         pass
 
@@ -1703,8 +1851,9 @@ def _save_to_excel_sp(row_idx: int, col_idx: int, key: str) -> None:
         if '_pct_' in key:
             val = val / 100.0 if val > 1.0 else val
         st.session_state[key] = f'{val:,.0f}' if '_pct_' not in key else f'{val * 100:.2f}%'
+        _cache_set('月次計画', row_idx, col_idx, val)
         gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
-        st.session_state['_monthly_dirty'] = True
+        _recalc_monthly_local()
     except Exception:
         pass
 
@@ -1718,7 +1867,7 @@ def _save_to_excel_sp_pct(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = f'{val_dec * 100:.2f}%'
         _cache_set('月次計画', row_idx, col_idx, val_dec)
         gsheets.write_cell_async('月次計画', row_idx, col_idx, val_dec)
-        load_monthly_full.clear()
+        _recalc_monthly_local()
     except Exception:
         pass
 
@@ -1731,7 +1880,7 @@ def _save_to_excel_sp_num(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('月次計画', row_idx, col_idx, val)
         gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
-        load_monthly_full.clear()
+        _recalc_monthly_local()
     except Exception:
         pass
 
@@ -1887,7 +2036,7 @@ def _save_to_excel_ne(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = _fv_ne(val, is_pct) or '0'
         _cache_set('値上げ効果計算表', row_idx, col_idx, val)
         gsheets.write_cell_async('値上げ効果計算表', row_idx, col_idx, val)
-        load_ne_full.clear()
+        _recalc_ne_local()
     except Exception:
         pass
 
@@ -2018,7 +2167,7 @@ def _save_to_excel_sim(row: int, col: int, key: str) -> None:
         st.session_state[key] = f'{val:g}'
         _cache_set(_SIM_SHEET, row, col, val)
         gsheets.write_cell_async(_SIM_SHEET, row, col, val)
-        load_sim_full.clear()
+        _recalc_sim_local()
     except Exception:
         pass
 
@@ -2294,23 +2443,44 @@ def _render_monthly_tab():
     render_sp_interactive(raw, calc_res)
 
 
-with tab_nenji:
+@st.fragment
+def _frag_nenji():
     _render_nenji_tab()
 
-with tab_monthly:
+
+@st.fragment
+def _frag_monthly():
     _render_monthly_tab()
 
-with tab_ne:
+
+@st.fragment
+def _frag_ne():
     _render_ne_tab()
 
-with tab_sim:
+
+@st.fragment
+def _frag_sim():
     _render_sim_tab()
+
+
+with tab_nenji:
+    _frag_nenji()
+
+with tab_monthly:
+    _frag_monthly()
+
+with tab_ne:
+    _frag_ne()
+
+with tab_sim:
+    _frag_sim()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # タブ③: 管理者用ロジック編集（純粋 Excel モード）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-with tab2:
+@st.fragment
+def _render_tab2():
     st.markdown(f"""
     <div class="admin-header">
         <h2>⚙️ 管理者用ロジック編集モード</h2>
@@ -2356,7 +2526,7 @@ with tab2:
                     _k.startswith('ne_inp_') or _k.startswith('ne_disp_') or
                     _k.startswith('sim_inp_')):
                 del st.session_state[_k]
-        st.rerun()
+        st.rerun(scope="app")
 
     # ── 現在のロジックプレビュー（数式込み） ──
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
@@ -2464,3 +2634,7 @@ with tab2:
             with leg2:
                 st.markdown("**行（番号）一覧**")
                 st.table(pd.DataFrame([{"行": v, "項目": k} for k, v in row_map.items()]))
+
+
+with tab2:
+    _render_tab2()

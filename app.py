@@ -354,7 +354,7 @@ details summary {{
     background: {NAVY};
     color: white;
     padding: 8px 14px;
-    text-align: right;
+    text-align: left;
     font-weight: 600;
     white-space: nowrap;
 }}
@@ -366,7 +366,7 @@ details summary {{
     padding: 7px 14px;
     border-top: 1.5px solid rgba(26,58,92,0.22);
     border-bottom: 1.5px solid rgba(26,58,92,0.22);
-    text-align: right;
+    text-align: left;
 }}
 .bs-tbl .r-total td:first-child {{ text-align: left; }}
 .bs-tbl .r-sub td {{
@@ -375,14 +375,14 @@ details summary {{
     color: {NAVY};
     font-weight: 600;
     border-bottom: 1px solid #e8eaf0;
-    text-align: right;
+    text-align: left;
 }}
 .bs-tbl .r-sub td:first-child {{ text-align: left; }}
 .bs-tbl .r-item td {{
     padding: 5px 14px 5px 28px;
     color: #444;
     border-bottom: 1px solid #f0f0f0;
-    text-align: right;
+    text-align: left;
 }}
 .bs-tbl .r-item td:first-child {{ text-align: left; }}
 .bs-tbl tbody tr:hover td {{ background: {GOLD}18 !important; }}
@@ -411,12 +411,12 @@ details summary {{
 .mp-cat  {{ background:{NAVY}; color:white; font-weight:700; text-align:center; }}
 .mp-sub  {{ background:#2a5580; color:white; font-weight:600; text-align:center; }}
 .mp-sub-total {{ background:#1e3f5e; color:white; font-weight:700; text-align:center; border-top:1.5px solid {GOLD}; }}
-.mp-goal {{ background:#fef9ee; color:#5a3a00; font-weight:700; text-align:right; border-left:2px solid {GOLD}; border-right:2px solid {GOLD}; }}
+.mp-goal {{ background:#fef9ee; color:#5a3a00; font-weight:700; text-align:left; border-left:2px solid {GOLD}; border-right:2px solid {GOLD}; }}
 .mp-ltan {{ background:#dce8f8; color:{NAVY}; font-weight:700; text-align:center; font-size:.74rem; }}
 .mp-lcum {{ background:#eef2f8; color:#445; font-weight:500; text-align:center; font-size:.74rem; }}
-.mp-0mo  {{ background:#f0f0f0; color:#555; text-align:right; font-size:.78rem; border-right:2px solid #b0b8cc; }}
-.mp-tan  {{ background:white; color:#333; text-align:right; }}
-.mp-cum  {{ background:#f4f7fc; color:#555; text-align:right; font-size:.78rem; }}
+.mp-0mo  {{ background:#f0f0f0; color:#555; text-align:left; font-size:.78rem; border-right:2px solid #b0b8cc; }}
+.mp-tan  {{ background:white; color:#333; text-align:left; }}
+.mp-cum  {{ background:#f4f7fc; color:#555; text-align:left; font-size:.78rem; }}
 
 /* Read-only display cell (replaces disabled text_input) */
 .disp-cell {{
@@ -427,7 +427,7 @@ details summary {{
     font-size: .83rem;
     color: #1A3A5C;
     font-weight: 600;
-    text-align: right;
+    text-align: left;
     min-height: 36px;
     line-height: 1.6;
     white-space: nowrap;
@@ -435,7 +435,7 @@ details summary {{
     box-sizing: border-box;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
 }}
 .disp-cell-total {{
     background: rgba(26,58,92,0.08);
@@ -445,7 +445,7 @@ details summary {{
     font-size: .83rem;
     color: #1A3A5C;
     font-weight: 700;
-    text-align: right;
+    text-align: left;
     min-height: 36px;
     line-height: 1.6;
     white-space: nowrap;
@@ -453,7 +453,7 @@ details summary {{
     box-sizing: border-box;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
 }}
 /* ─── 年次計画 スプレッドシート風高密度レイアウト ─── */
 [data-testid="stHorizontalBlock"] {{
@@ -534,7 +534,7 @@ details summary {{
     min-height: 22px;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
     border: 1px solid #d5e1ee;
     white-space: nowrap;
 }}
@@ -547,7 +547,7 @@ details summary {{
     min-height: 22px;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
     border: 1px solid rgba(26,58,92,0.3);
     border-top: 1.5px solid rgba(26,58,92,0.5);
     white-space: nowrap;
@@ -589,6 +589,7 @@ div[data-testid="stTextInput"] input {{
     font-size: .83rem !important;
     box-sizing: border-box !important;
     margin: 0 !important;
+    text-align: left !important;
 }}
 /* 年次計画タブ（2番目）：高密度 np-val スタイルに合わせたコンパクト入力 */
 [data-baseweb="tab-panel"]:nth-child(2) div[data-testid="stTextInput"] {{
@@ -600,6 +601,7 @@ div[data-testid="stTextInput"] input {{
     min-height: 28px !important;
     height: 28px !important;
     font-size: .78rem !important;
+    text-align: left !important;
 }}
 </style>
 """, unsafe_allow_html=True)
@@ -1200,7 +1202,7 @@ def render_sales_interactive(rows: list, calc_results: dict) -> None:
             if info.get('is_formula'):
                 val  = calc_results.get((row_idx, yr))
                 try:
-                    disp = _safe_num(val, ',.2f')
+                    disp = _safe_num(val, ',.0f')
                 except (TypeError, ValueError):
                     disp = '0'
                 rc[ci + 3].markdown(f'<div class="disp-cell">{disp}</div>', unsafe_allow_html=True)
@@ -2313,7 +2315,7 @@ def _save_to_excel_sp(row_idx: int, col_idx: int, key: str) -> None:
         val = float(raw_val) if raw_val else 0.0
         if '_pct_' in key:
             val = val / 100.0 if val > 1.0 else val
-        st.session_state[key] = f'{val:,.0f}' if '_pct_' not in key else f'{val * 100:.2f}%'
+        st.session_state[key] = f'{val:,.0f}' if '_pct_' not in key else f'{val * 100:.1f}%'
         _cache_set('月次計画', row_idx, col_idx, val)
         _sync_write_refresh('月次計画', row_idx, col_idx, val)
         _recalc_monthly_local()
@@ -2327,7 +2329,7 @@ def _save_to_excel_sp_pct(row_idx: int, col_idx: int, key: str) -> None:
         raw_val = str(st.session_state.get(key) or '0').replace(',', '').replace('%', '')
         val_pct = float(raw_val) if raw_val else 0.0
         val_dec = val_pct / 100.0 if val_pct > 1.0 else val_pct
-        st.session_state[key] = f'{val_dec * 100:.2f}%'
+        st.session_state[key] = f'{val_dec * 100:.1f}%'
         _cache_set('月次計画', row_idx, col_idx, val_dec)
         _sync_write_refresh('月次計画', row_idx, col_idx, val_dec)
         _recalc_monthly_local()
@@ -2481,9 +2483,7 @@ def _fv_ne(v, is_pct: bool = False) -> str:
         f = float(v)
         if is_pct:
             return f'{f * 100:.1f}%'
-        if f == round(f):
-            return f'{f:,.0f}'
-        return f'{f:,.2f}'
+        return f'{f:,.0f}'
     except (TypeError, ValueError):
         return ''
 
@@ -2644,7 +2644,7 @@ def _save_to_excel_sim(row: int, col: int, key: str) -> None:
     try:
         raw_val = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw_val) if raw_val else 0.0
-        st.session_state[key] = f'{val:g}'
+        st.session_state[key] = f'{val:,.0f}'
         _cache_set(_SIM_SHEET, row, col, val)
         _sync_write_refresh(_SIM_SHEET, row, col, val)
         _recalc_sim_local()
@@ -2671,9 +2671,7 @@ def _fv_s(v, pct: bool = False) -> str:
         f = float(v)
         if pct:
             return f'{f * 100:.1f}%'
-        if f == round(f):
-            return f'{int(f):,}'
-        return f'{f:,.2f}'
+        return f'{int(round(f)):,}'
     except (TypeError, ValueError):
         return ''
 
@@ -2854,7 +2852,7 @@ def _render_sim_tab() -> None:
             v = raw.get(r, {}).get(c)
             try:
                 fv = float(v) if v is not None else 0.0
-                st.session_state[key] = f'{fv:g}'
+                st.session_state[key] = f'{fv:,.0f}'
             except (TypeError, ValueError):
                 st.session_state[key] = '0'
 

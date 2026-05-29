@@ -522,22 +522,36 @@ details summary {{
     margin: 0 0 0.1rem 0;
     padding: 0;
 }}
-/* テキスト入力をスプレッドシートセル風に */
-div[data-testid="stTextInput"] input {{
-    border-radius: 0 !important;
-    padding: 2px 5px !important;
-    min-height: 22px !important;
-    font-size: .78rem !important;
-    height: 22px !important;
-    box-sizing: border-box !important;
+/* テキスト入力をスプレッドシートセル風に（ラベル・補足テキスト行を完全に非表示） */
+div[data-testid="stTextInput"] {{
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    max-height: 28px !important;
+}}
+div[data-testid="stTextInput"] > label {{
+    display: none !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }}
 div[data-testid="stTextInput"] > div {{
     margin: 0 !important;
     padding: 0 !important;
+    overflow: hidden !important;
 }}
-div[data-testid="stTextInput"] {{
+div[data-testid="stTextInput"] > div > div {{
     margin: 0 !important;
     padding: 0 !important;
+}}
+div[data-testid="stTextInput"] input {{
+    border-radius: 0 !important;
+    padding: 2px 5px !important;
+    min-height: 22px !important;
+    height: 22px !important;
+    font-size: .78rem !important;
+    box-sizing: border-box !important;
+    margin: 0 !important;
 }}
 </style>
 """, unsafe_allow_html=True)
@@ -564,7 +578,8 @@ _BS_SKIP = {'貸借対照表', '0年目', '１年目', '２年目', '３年目',
 @st.cache_data(ttl=60)
 def _detect_nenji_boundaries(_v: int = 0) -> tuple:
     """年次計画シートのBS・PL区切り行をスキャンで動的に検出する。
-    E〜J列(年度値列)に _BS_SKIP の年度ラベルが出現する行をセクション区切りとみなす。
+    B列が非空 かつ E列以降に年度ラベルを持つ行をセクション区切りとみなす。
+    （B列の条件を加えることで、BS内部の小見出し行による誤検知を防ぐ）
     Returns: (bs_row, pl_row, pl_end_row)
       BSスキャン: range(bs_row, pl_row)
       PLスキャン: range(pl_row, pl_end_row)
@@ -573,8 +588,12 @@ def _detect_nenji_boundaries(_v: int = 0) -> tuple:
     _yr_set = {v for v in _BS_SKIP if v != '貸借対照表'}
 
     sep: list[int] = []
+    max_col = ws.max_column
     for r in range(1, min(ws.max_row + 1, 300)):
-        for col in range(5, 11):
+        b_v = ws.cell(r, 2).value
+        if not b_v or not str(b_v).strip():
+            continue  # B列が空ならセクション区切りではない
+        for col in range(5, max_col + 1):
             v = ws.cell(r, col).value
             if v is not None and str(v).strip() in _yr_set:
                 sep.append(r)
@@ -585,8 +604,46 @@ def _detect_nenji_boundaries(_v: int = 0) -> tuple:
     if len(sep) >= 3:
         return sep[0], sep[1], sep[2]
     if len(sep) == 2:
-        return sep[0], sep[1], sep[1] + 50
+        return sep[0], sep[1], sep[1] + 60
     return 2, 31, 67
+
+
+@st.cache_data(ttl=60)
+def _detect_year_cols(_v: int = 0) -> list:
+    """年次計画シートの年度列を動的に検出する。
+    セクションヘッダー行のE列以降にある全ての非空セルを年度列として返す。
+    これにより K列など追加列も自動的に含まれる。
+    Returns: [(col_index, label_str), ...]
+    """
+    ws = gsheets.GSheetWS('年次計画', data_only=True)
+    _yr_set = {v for v in _BS_SKIP if v != '貸借対照表'}
+    max_col = ws.max_column
+
+    header_row = None
+    for r in range(1, min(ws.max_row + 1, 300)):
+        b_v = ws.cell(r, 2).value
+        if not b_v or not str(b_v).strip():
+            continue
+        for col in range(5, max_col + 1):
+            v = ws.cell(r, col).value
+            if v is not None and str(v).strip() in _yr_set:
+                header_row = r
+                break
+        if header_row:
+            break
+
+    if header_row is None:
+        ws.close()
+        return list(BS_YEAR_COLS)
+
+    year_cols: list[tuple[int, str]] = []
+    for col in range(5, max_col + 1):
+        v = ws.cell(header_row, col).value
+        if v is not None and str(v).strip():
+            year_cols.append((col, str(v).strip()))
+
+    ws.close()
+    return year_cols if year_cols else list(BS_YEAR_COLS)
 
 
 # 年次計画シートの初期BS構造: (C列ラベル, D列ラベル)
@@ -622,9 +679,10 @@ def init_bs_sheet() -> None:
 
 
 def _load_bs_interactive():
-    """年次計画シートを読み込み、数式情報付きで行データを返す"""
+    """年次計画シートのBS部分を読み込む。行・列ともスプレッドシートから動的に検出する。"""
     _nv = st.session_state.get('_nenji_ver', 0)
     _bs_row, _pl_row, _ = _detect_nenji_boundaries(_nv)
+    _year_cols = _detect_year_cols(_nv)
     ws_v = gsheets.GSheetWS('年次計画', data_only=True)
     ws_f = gsheets.GSheetWS('年次計画', data_only=False)
 
@@ -634,30 +692,36 @@ def _load_bs_interactive():
         c_val = ws_v.cell(r, 3).value
         d_val = ws_v.cell(r, 4).value
 
-        if b_val is None and c_val is None and d_val is None:
-            continue
-
         b_str = str(b_val).strip() if b_val is not None else ''
         c_str = str(c_val).strip() if c_val is not None else ''
         d_str = str(d_val).strip() if d_val is not None else ''
+
+        # 全列が空ならスキップ
+        if not b_str and not c_str and not d_str:
+            # 年度列にも値がなければ本当の空行
+            if not any(ws_v.cell(r, col).value is not None for col, _ in _year_cols):
+                continue
 
         if b_str in _BS_SKIP or c_str in _BS_SKIP or d_str in _BS_SKIP:
             continue
 
         if b_str and not c_str and not d_str:
-            label = b_str
-            rtype = 'section'
+            label, rtype = b_str, 'section'
         elif c_str and not d_str:
             label = c_str
-            rtype = 'sub' if str(c_val).startswith('　') else 'total'
+            rtype = 'sub' if str(c_val or '').startswith('　') else 'total'
         elif d_str:
-            label = d_str
-            rtype = 'item'
+            label, rtype = d_str, 'item'
+        elif b_str:
+            label, rtype = b_str, 'section'
+        elif c_str:
+            label = c_str
+            rtype = 'sub' if str(c_val or '').startswith('　') else 'total'
         else:
-            continue
+            label, rtype = '', 'item'  # 年度列にデータがあるが行ラベルなし
 
         year_vals = {}
-        for col, yr in BS_YEAR_COLS:
+        for col, yr in _year_cols:
             cf = ws_f.cell(r, col)
             cv = ws_v.cell(r, col)
             is_fm = isinstance(cf.value, str) and cf.value.startswith('=')
@@ -696,6 +760,7 @@ def _save_to_excel_bs(row_idx: int, col_idx: int, key: str) -> None:
         _recalc_nenji_local()
         load_bs.clear()
         _detect_nenji_boundaries.clear()
+        _detect_year_cols.clear()
         load_pl.clear()
         load_sales.clear()
     except Exception:
@@ -734,7 +799,8 @@ def render_bs_interactive(rows: list, calc_results: dict) -> None:
         st.info('データがありません。')
         return
 
-    yr_labels = [yr for _, yr in BS_YEAR_COLS]
+    # 実際に読み込まれた年度列からラベルを取得（動的）
+    yr_labels = list(rows[0]['years'].keys()) if rows else [yr for _, yr in BS_YEAR_COLS]
     COL_W = [0.8, 1.0, 1.2] + [1.0] * len(yr_labels)
 
     hdr = st.columns(COL_W, gap="small")
@@ -788,9 +854,10 @@ def render_bs_interactive(rows: list, calc_results: dict) -> None:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _load_pl_interactive():
-    """年次計画シートの損益計算書行を動的に読み込み、数式情報付きで行データを返す"""
+    """年次計画シートのPL部分を読み込む。行・列ともスプレッドシートから動的に検出する。"""
     _nv = st.session_state.get('_nenji_ver', 0)
     _, _pl_row, _pl_end = _detect_nenji_boundaries(_nv)
+    _year_cols = _detect_year_cols(_nv)
     ws_v = gsheets.GSheetWS('年次計画', data_only=True)
     ws_f = gsheets.GSheetWS('年次計画', data_only=False)
 
@@ -800,30 +867,34 @@ def _load_pl_interactive():
         c_val = ws_v.cell(r, 3).value
         d_val = ws_v.cell(r, 4).value
 
-        if b_val is None and c_val is None and d_val is None:
-            continue
-
         b_str = str(b_val).strip() if b_val is not None else ''
         c_str = str(c_val).strip() if c_val is not None else ''
         d_str = str(d_val).strip() if d_val is not None else ''
+
+        if not b_str and not c_str and not d_str:
+            if not any(ws_v.cell(r, col).value is not None for col, _ in _year_cols):
+                continue
 
         if b_str in _BS_SKIP or c_str in _BS_SKIP or d_str in _BS_SKIP:
             continue
 
         if b_str and not c_str and not d_str:
-            label = b_str
-            rtype = 'section'
+            label, rtype = b_str, 'section'
         elif c_str and not d_str:
             label = c_str
-            rtype = 'sub' if str(c_val).startswith('　') else 'total'
+            rtype = 'sub' if str(c_val or '').startswith('　') else 'total'
         elif d_str:
-            label = d_str
-            rtype = 'item'
+            label, rtype = d_str, 'item'
+        elif b_str:
+            label, rtype = b_str, 'section'
+        elif c_str:
+            label = c_str
+            rtype = 'sub' if str(c_val or '').startswith('　') else 'total'
         else:
-            continue
+            label, rtype = '', 'item'
 
         year_vals = {}
-        for col, yr in BS_YEAR_COLS:
+        for col, yr in _year_cols:
             cf = ws_f.cell(r, col)
             cv = ws_v.cell(r, col)
             is_fm = isinstance(cf.value, str) and cf.value.startswith('=')
@@ -862,6 +933,7 @@ def _save_to_excel_pl(row_idx: int, col_idx: int, key: str) -> None:
         _recalc_nenji_local()
         load_bs.clear()
         _detect_nenji_boundaries.clear()
+        _detect_year_cols.clear()
         load_pl.clear()
         load_sales.clear()
     except Exception:
@@ -885,7 +957,7 @@ def render_pl_interactive(rows: list, calc_results: dict) -> None:
         st.info('データがありません。')
         return
 
-    yr_labels = [yr for _, yr in BS_YEAR_COLS]
+    yr_labels = list(rows[0]['years'].keys()) if rows else [yr for _, yr in BS_YEAR_COLS]
     COL_W = [0.8, 1.0, 1.2] + [1.0] * len(yr_labels)
 
     hdr = st.columns(COL_W, gap="small")
@@ -1005,6 +1077,7 @@ def _save_to_excel_sales(row_idx: int, col_idx: int, key: str) -> None:
         _recalc_nenji_local()
         load_bs.clear()
         _detect_nenji_boundaries.clear()
+        _detect_year_cols.clear()
         load_pl.clear()
         load_sales.clear()
     except Exception:
@@ -2662,6 +2735,7 @@ def _render_tab2():
         get_formula_df.clear()
         load_bs.clear()
         _detect_nenji_boundaries.clear()
+        _detect_year_cols.clear()
         load_pl.clear()
         load_sales.clear()
         load_monthly_full.clear()

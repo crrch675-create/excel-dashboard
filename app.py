@@ -113,6 +113,22 @@ def _cache_set(sheet: str, row: int, col: int, value) -> None:
         store['data'].setdefault(sheet + '_v', {}).setdefault(row, {})[col] = value
 
 
+def _sync_write_refresh(sheet_name: str, row: int, col: int, value) -> None:
+    """Google Sheetsに同期書き込みし、計算済み値を即時再取得してキャッシュを更新する。
+    これによりIF/IFERROR/ROUNDなど複雑な数式も含めて正確に反映される。"""
+    try:
+        gsheets.write_cell(sheet_name, row, col, value, force=True)
+    except Exception:
+        pass
+    try:
+        d = _fetch_dict(sheet_name, True)
+        store = _get_store()
+        with store['lock']:
+            store['data'][sheet_name + '_v'] = d
+    except Exception:
+        pass
+
+
 NAVY = "#1A3A5C"
 GOLD = "#C8973A"
 BG   = "#F8F9FA"
@@ -756,8 +772,7 @@ def _save_to_excel_bs(row_idx: int, col_idx: int, key: str) -> None:
         val = float(raw) if raw else 0.0
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('年次計画', row_idx, col_idx, val)
-        write_input_to_excel_bs(row_idx, col_idx, val)
-        _recalc_nenji_local()
+        _sync_write_refresh('年次計画', row_idx, col_idx, val)
         load_bs.clear()
         _detect_nenji_boundaries.clear()
         _detect_year_cols.clear()
@@ -930,8 +945,7 @@ def _save_to_excel_pl(row_idx: int, col_idx: int, key: str) -> None:
         val = float(raw) if raw else 0.0
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('年次計画', row_idx, col_idx, val)
-        write_input_to_excel_pl(row_idx, col_idx, val)
-        _recalc_nenji_local()
+        _sync_write_refresh('年次計画', row_idx, col_idx, val)
         load_bs.clear()
         _detect_nenji_boundaries.clear()
         _detect_year_cols.clear()
@@ -1085,8 +1099,7 @@ def _save_to_excel_sales(row_idx: int, col_idx: int, key: str) -> None:
         val = float(raw) if raw else 0.0
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('年次計画', row_idx, col_idx, val)
-        write_input_to_excel_sales(row_idx, col_idx, val)
-        _recalc_nenji_local()
+        _sync_write_refresh('年次計画', row_idx, col_idx, val)
         load_bs.clear()
         _detect_nenji_boundaries.clear()
         _detect_year_cols.clear()
@@ -1257,8 +1270,8 @@ def _save_to_excel_monthly(row_idx: int, col_idx: int, key: str) -> None:
         val = float(raw_val) if raw_val else 0.0
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('月次計画', row_idx, col_idx, val)
-        gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
-        _recalc_monthly_local()
+        _sync_write_refresh('月次計画', row_idx, col_idx, val)
+        load_monthly_full.clear()
     except Exception:
         pass
 
@@ -1989,8 +2002,8 @@ def _save_to_excel_cf(row_idx: int, col_idx: int, key: str) -> None:
         val = float(raw_val) if raw_val else 0.0
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('月次計画', row_idx, col_idx, val)
-        gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
-        _recalc_monthly_local()
+        _sync_write_refresh('月次計画', row_idx, col_idx, val)
+        load_monthly_full.clear()
     except Exception:
         pass
 
@@ -2101,8 +2114,8 @@ def _save_to_excel_sp(row_idx: int, col_idx: int, key: str) -> None:
             val = val / 100.0 if val > 1.0 else val
         st.session_state[key] = f'{val:,.0f}' if '_pct_' not in key else f'{val * 100:.2f}%'
         _cache_set('月次計画', row_idx, col_idx, val)
-        gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
-        _recalc_monthly_local()
+        _sync_write_refresh('月次計画', row_idx, col_idx, val)
+        load_monthly_full.clear()
     except Exception:
         pass
 
@@ -2115,8 +2128,8 @@ def _save_to_excel_sp_pct(row_idx: int, col_idx: int, key: str) -> None:
         val_dec = val_pct / 100.0 if val_pct > 1.0 else val_pct
         st.session_state[key] = f'{val_dec * 100:.2f}%'
         _cache_set('月次計画', row_idx, col_idx, val_dec)
-        gsheets.write_cell_async('月次計画', row_idx, col_idx, val_dec)
-        _recalc_monthly_local()
+        _sync_write_refresh('月次計画', row_idx, col_idx, val_dec)
+        load_monthly_full.clear()
     except Exception:
         pass
 
@@ -2128,8 +2141,8 @@ def _save_to_excel_sp_num(row_idx: int, col_idx: int, key: str) -> None:
         val = float(raw_val) if raw_val else 0.0
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('月次計画', row_idx, col_idx, val)
-        gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
-        _recalc_monthly_local()
+        _sync_write_refresh('月次計画', row_idx, col_idx, val)
+        load_monthly_full.clear()
     except Exception:
         pass
 
@@ -2293,8 +2306,8 @@ def _save_to_excel_ne(row_idx: int, col_idx: int, key: str) -> None:
         is_pct = _ne_is_pct(row_idx, col_idx)
         st.session_state[key] = _fv_ne(val, is_pct) or '0'
         _cache_set('値上げ効果計算表', row_idx, col_idx, val)
-        gsheets.write_cell_async('値上げ効果計算表', row_idx, col_idx, val)
-        _recalc_ne_local()
+        _sync_write_refresh('値上げ効果計算表', row_idx, col_idx, val)
+        load_ne_full.clear()
     except Exception:
         pass
 
@@ -2431,8 +2444,8 @@ def _save_to_excel_sim(row: int, col: int, key: str) -> None:
         val = float(raw_val) if raw_val else 0.0
         st.session_state[key] = f'{val:g}'
         _cache_set(_SIM_SHEET, row, col, val)
-        gsheets.write_cell_async(_SIM_SHEET, row, col, val)
-        _recalc_sim_local()
+        _sync_write_refresh(_SIM_SHEET, row, col, val)
+        load_sim_full.clear()
     except Exception:
         pass
 

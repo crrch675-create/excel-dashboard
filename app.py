@@ -564,7 +564,7 @@ div[data-testid="stTextInput"] {{
     margin: 0 !important;
     padding: 0 !important;
     overflow: hidden !important;
-    max-height: 28px !important;
+    max-height: 56px !important;
 }}
 div[data-testid="stTextInput"] > label {{
     display: none !important;
@@ -582,13 +582,24 @@ div[data-testid="stTextInput"] > div > div {{
     padding: 0 !important;
 }}
 div[data-testid="stTextInput"] input {{
-    border-radius: 0 !important;
-    padding: 2px 5px !important;
-    min-height: 22px !important;
-    height: 22px !important;
-    font-size: .78rem !important;
+    border-radius: 6px !important;
+    padding: .45rem .7rem !important;
+    min-height: 52px !important;
+    height: 52px !important;
+    font-size: .83rem !important;
     box-sizing: border-box !important;
     margin: 0 !important;
+}}
+/* 年次計画タブ（2番目）：高密度 np-val スタイルに合わせたコンパクト入力 */
+[data-baseweb="tab-panel"]:nth-child(2) div[data-testid="stTextInput"] {{
+    max-height: 30px !important;
+}}
+[data-baseweb="tab-panel"]:nth-child(2) div[data-testid="stTextInput"] input {{
+    border-radius: 0 !important;
+    padding: 2px 5px !important;
+    min-height: 28px !important;
+    height: 28px !important;
+    font-size: .78rem !important;
 }}
 </style>
 """, unsafe_allow_html=True)

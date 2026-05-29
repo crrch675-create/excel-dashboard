@@ -1214,13 +1214,16 @@ _MO_COL_W  = [0.9, 0.9, 0.7, 0.5] + [0.68] * 13
 def _fv_mo(v, fmt='num'):
     if v is None:
         return ''
+    s = str(v)
+    if s.startswith('#'):
+        return ''
     try:
-        f = float(v)
+        f = float(s)
         if fmt == 'pct':
             return f'{f * 100:.1f}%' if abs(f) <= 2.0 else f'{f:.1f}%'
         return f'{f:,.0f}'
     except (TypeError, ValueError):
-        return str(v)
+        return s
 
 
 @st.cache_data(ttl=15)

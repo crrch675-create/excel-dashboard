@@ -863,7 +863,7 @@ def _load_pl_interactive():
     ws_f = gsheets.GSheetWS('年次計画', data_only=False)
 
     rows = []
-    for r in range(_pl_row, _pl_end):
+    for r in range(_pl_row + 1, _pl_end):  # +1 でPLヘッダー行（「利益計画」等）をスキップ
         b_val = ws_v.cell(r, 2).value
         c_val = ws_v.cell(r, 3).value
         d_val = ws_v.cell(r, 4).value
@@ -1013,11 +1013,19 @@ def render_pl_interactive(rows: list, calc_results: dict) -> None:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _load_sales_interactive():
+    """商品別販売計画を動的境界・動的年度列で読み込む。"""
+    _nv = st.session_state.get('_nenji_ver', 0)
+    _, _, _sales_hdr_row = _detect_nenji_boundaries(_nv)
+    _year_cols = _detect_year_cols(_nv)
     ws_v = gsheets.GSheetWS('年次計画', data_only=True)
     ws_f = gsheets.GSheetWS('年次計画', data_only=False)
     rows = []
     first_group = True
-    for r in range(67, 111):
+    # _sales_hdr_row はセクションヘッダー行（「商品別販売計画」等）→ +1 でスキップ
+    scan_start = _sales_hdr_row + 1
+    scan_end   = ws_v.max_row + 1
+
+    for r in range(scan_start, scan_end):
         b_val = ws_v.cell(r, 2).value
         c_val = ws_v.cell(r, 3).value
         d_val = ws_v.cell(r, 4).value
@@ -1026,10 +1034,12 @@ def _load_sales_interactive():
         d_str = str(d_val).strip() if d_val is not None else ''
         if not b_str and not c_str and not d_str:
             continue
+        if b_str in _BS_SKIP or c_str in _BS_SKIP or d_str in _BS_SKIP:
+            continue
 
-        def _year_vals(row_r):
+        def _year_vals(row_r, _yc=_year_cols):
             yv = {}
-            for col, yr in BS_YEAR_COLS:
+            for col, yr in _yc:
                 cf = ws_f.cell(row_r, col)
                 cv = ws_v.cell(row_r, col)
                 is_fm = isinstance(cf.value, str) and cf.value.startswith('=')
@@ -1900,23 +1910,24 @@ def _render_nenji_tab():
         calc_results_pl = calc_from_state_pl(pl_rows)
         render_pl_interactive(pl_rows, calc_results_pl)
 
-    st.markdown(f'<div class="sec-title">{_he("商品別販売計画")}</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown(f'<p class="np-title">&#128230; {_he("商品別販売計画")}</p>', unsafe_allow_html=True)
 
-    sales_rows = load_sales(_nv)
+        sales_rows = load_sales(_nv)
 
-    for _row in sales_rows:
-        _ridx = _row['row_idx']
-        for _yr, _info in _row['years'].items():
-            if not _info['is_formula']:
-                _k = f"sales_inp_{_ridx}_{_yr}"
-                if _k not in st.session_state:
-                    try:
-                        st.session_state[_k] = f"{float(_info.get('value') or 0):,.0f}"
-                    except (TypeError, ValueError):
-                        st.session_state[_k] = '0'
+        for _row in sales_rows:
+            _ridx = _row['row_idx']
+            for _yr, _info in _row['years'].items():
+                if not _info['is_formula']:
+                    _k = f"sales_inp_{_ridx}_{_yr}"
+                    if _k not in st.session_state:
+                        try:
+                            st.session_state[_k] = f"{float(_info.get('value') or 0):,.0f}"
+                        except (TypeError, ValueError):
+                            st.session_state[_k] = '0'
 
-    calc_results_sales = calc_from_state_sales(sales_rows)
-    render_sales_interactive(sales_rows, calc_results_sales)
+        calc_results_sales = calc_from_state_sales(sales_rows)
+        render_sales_interactive(sales_rows, calc_results_sales)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

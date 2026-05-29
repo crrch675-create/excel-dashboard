@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Google credentials (絶対にcommitしない)
+*.json
+
+# Excel / 旧ファイル
+*.xlsx
+*.xls
+
+# Streamlit local cache
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db

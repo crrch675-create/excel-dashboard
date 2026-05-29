@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI','BIZ UDPGothic',sans-serif; font-size:13px; background:#F8F9FA; }
+
+/* ─── Formula Bar ─── */
+#formula-bar {
+  display:flex; align-items:center; gap:6px;
+  padding:5px 8px;
+  background:#1A3A5C;
+  border-bottom:2px solid #C8973A;
+}
+#addr-box {
+  width:68px; min-width:68px; background:white;
+  border:1.5px solid #C8973A; border-radius:4px;
+  padding:3px 6px; font-weight:700; color:#1A3A5C;
+  font-size:12px; text-align:center; letter-spacing:.04em;
+}
+#fx-label { color:#C8973A; font-weight:700; font-size:15px; font-style:italic; user-select:none; min-width:20px; text-align:center; }
+#formula-input {
+  flex:1; background:white; border:1.5px solid #C8973A; border-radius:4px;
+  padding:4px 10px; font-family:'Consolas','Courier New',monospace;
+  font-size:13px; color:#1A3A5C; outline:none;
+}
+#formula-input:focus { box-shadow:0 0 0 2px rgba(200,151,58,.3); }
+#formula-input.fm { background:#fffde7; }
+
+/* ─── Grid ─── */
+#grid-wrap { overflow:auto; border:1px solid #dee2e6; border-top:none; }
+table { border-collapse:collapse; width:max-content; min-width:100%; }
+
+/* Column headers */
+.ch {
+  background:#1A3A5C; color:white; font-weight:700; font-size:12px;
+  text-align:center; padding:6px 10px; border:1px solid #2a5080;
+  min-width:130px; user-select:none;
+  position:sticky; top:0; z-index:4; white-space:nowrap;
+  position:relative;
+}
+.ch-corner { min-width:44px; width:44px; background:#122a44; left:0; z-index:5; position:sticky; top:0; }
+.ch-item { min-width:190px; left:44px; z-index:4; border-right:2px solid #C8973A; position:sticky; top:0; }
+
+/* Row numbers */
+.rn {
+  background:#e9ecef; color:#555; font-weight:700; font-size:12px;
+  text-align:center; padding:4px 6px;
+  border:1px solid #ced4da; border-right:2px solid #adb5bd;
+  min-width:44px; width:44px; user-select:none;
+  position:sticky; left:0; z-index:1;
+}
+
+/* Cells */
+td.cell {
+  border:1px solid #e0e0e0; padding:4px 8px; min-width:130px; height:32px;
+  cursor:cell; color:#1A3A5C; font-weight:600; background:white;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:260px;
+}
+td.cell:hover { background:rgba(200,151,58,.07); }
+td.cell.item-col {
+  min-width:190px; font-weight:700; background:#f8f9fa;
+  position:sticky; left:44px; z-index:1; border-right:2px solid #C8973A;
+}
+td.cell.item-col:hover { background:#f0f2f5; }
+td.cell.sel { background:rgba(200,151,58,.2)!important; outline:2px solid #C8973A; outline-offset:-2px; z-index:2; }
+td.cell.item-col.sel { z-index:3; }
+td.cell.fml { /* formula result cell – no extra style beyond the title tooltip */ }
+td.cell.ref-hl { background:rgba(26,58,92,.18)!important; outline:2px dashed #1A3A5C; outline-offset:-2px; }
+td.cell.editing { padding:0; overflow:visible; outline:2.5px solid #1A3A5C; outline-offset:-2px; z-index:3; }
+td.cell.editing input {
+  display:block; width:100%; min-width:100%; height:100%; min-height:32px;
+  border:none; outline:none; padding:4px 8px;
+  font-family:'Consolas','Courier New',monospace; font-size:13px;
+  color:#1A3A5C; font-weight:700; background:#fffde7;
+}
+body.fm-active td.cell:not(.editing) { cursor:crosshair; }
+
+/* Resize handle */
+.rh { position:absolute; right:0; top:0; bottom:0; width:5px; cursor:col-resize; z-index:6; }
+</style>
+</head>
+<body>
+
+<div id="formula-bar">
+  <div id="addr-box">A1</div>
+  <div id="fx-label">ƒx</div>
+  <input id="formula-input" type="text" autocomplete="off" spellcheck="false"
+         placeholder="値または =SUM(B2:B3) のような数式を入力...">
+</div>
+<div id="grid-wrap">
+  <table><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hyperformula@2.7.1/dist/hyperformula.full.min.js"
+  onerror="window.__HF_FAILED=true"></script>
+<script>
+// ─────────────────────────────────────────────
+// Streamlit bridge
+// ─────────────────────────────────────────────
+const ST = {
+  _post(m){ window.parent.postMessage({isStreamlitMessage:true,...m},'*'); },
+  ready()  { this._post({type:'streamlit:componentReady',apiVersion:1}); },
+  value(v) { this._post({type:'streamlit:setComponentValue',value:v,dataType:'json'}); },
+  height(h){ this._post({type:'streamlit:setFrameHeight',height:h}); }
+};
+
+// Also listen for render messages (bonus path if message protocol works)
+window.addEventListener('message', e => {
+  if (!e.data || e.data.type !== 'streamlit:render') return;
+  const args = e.data.args || {};
+  if (args.data) applyData(args.data);
+});
+
+// ─────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────
+let HF=null, COLS=[], ROWS=[], FMLS={};
+let sel=null, edt=null, fMode=false;
+
+// ─────────────────────────────────────────────
+// Utilities
+// ─────────────────────────────────────────────
+function colLetter(i){ return i<26?String.fromCharCode(65+i):String.fromCharCode(64+Math.floor(i/26))+String.fromCharCode(65+i%26); }
+function addr(r,c){ return colLetter(c)+(r+2); }
+function addrRC(a){ const m=a.match(/^([A-Z]+)(\d+)$/i); if(!m)return null; let c=0; for(let i=0;i<m[1].length;i++) c=c*26+m[1].toUpperCase().charCodeAt(i)-64; return{r:+m[2]-2,c:c-1}; }
+function fmtN(v){ const n=parseFloat(String(v).replace(/,/g,'')); return isNaN(n)?String(v):(Number.isInteger(n)?n.toLocaleString('ja-JP'):n.toLocaleString('ja-JP',{maximumFractionDigits:4})); }
+
+// ─────────────────────────────────────────────
+// HyperFormula
+// ─────────────────────────────────────────────
+function initHF(){
+  if(window.__HF_FAILED || typeof HyperFormula==='undefined') return;
+  const sheet=[ COLS.slice() ];
+  ROWS.forEach(row => sheet.push(COLS.map(c=>{ const v=String(row[c]??'').trim(); if(!v)return ''; if(v.startsWith('='))return v; const n=parseFloat(v.replace(/,/g,'')); return isNaN(n)?v:n; })));
+  try{ if(HF)HF.destroy(); }catch(e){}
+  HF=HyperFormula.buildFromArray(sheet,{licenseKey:'gpl-v3',precisionRounding:10});
+  FMLS={};
+  ROWS.forEach((row,ri)=>COLS.forEach((col,ci)=>{ const v=String(row[col]??'').trim(); if(v.startsWith('='))FMLS[addr(ri,ci)]=v; }));
+}
+
+function calcVal(r,c){
+  if(!HF){ const v=ROWS[r]?.[COLS[c]]??''; return String(v); }
+  try{
+    const raw=HF.getCellValue({sheet:0,row:r+1,col:c});
+    if(raw===null||raw===undefined||raw==='')return '';
+    if(typeof raw==='object') return '#'+(raw.type||'ERR');
+    return raw;
+  }catch(e){return '#ERR';}
+}
+
+function rawInput(r,c){ return FMLS[addr(r,c)]??(String(ROWS[r]?.[COLS[c]]??'').trim()); }
+
+function setHF(r,c,v){
+  if(!HF)return;
+  try{ const n=parseFloat(String(v).replace(/,/g,'')); HF.setCellContents({sheet:0,row:r+1,col:c},[[v.startsWith('=')?v:(isNaN(n)?(!v?null:v):n)]]); }catch(e){}
+}
+
+function calcAll(){
+  const vals={};
+  ROWS.forEach((_,ri)=>COLS.forEach((col,ci)=>{ if(ci===0)return; const a=addr(ri,ci); if(FMLS[a]){ const v=calcVal(ri,ci); const n=parseFloat(String(v).replace(/,/g,'')); vals[a]=isNaN(n)?v:n; }}));
+  return vals;
+}
+
+// ─────────────────────────────────────────────
+// Grid rendering
+// ─────────────────────────────────────────────
+function buildGrid(){
+  const thead=document.getElementById('thead'), tbody=document.getElementById('tbody');
+  thead.innerHTML=''; tbody.innerHTML='';
+
+  // Header row
+  const hr=document.createElement('tr');
+  const corner=document.createElement('th'); corner.className='ch ch-corner'; hr.appendChild(corner);
+  COLS.forEach((col,ci)=>{
+    const th=document.createElement('th');
+    th.className='ch'+(ci===0?' ch-item':'');
+    th.textContent=colLetter(ci)+'  │  '+col;
+    const rh=document.createElement('div'); rh.className='rh';
+    rh.addEventListener('mousedown',e=>colResize(e,th));
+    th.appendChild(rh);
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+
+  // Data rows
+  ROWS.forEach((row,ri)=>{
+    const tr=document.createElement('tr');
+    const rn=document.createElement('td'); rn.className='rn'; rn.textContent=ri+2; tr.appendChild(rn);
+    COLS.forEach((col,ci)=>{
+      const td=document.createElement('td');
+      td.className='cell'+(ci===0?' item-col':'');
+      td.dataset.r=ri; td.dataset.c=ci;
+      showCell(td,ri,ci);
+      td.addEventListener('mousedown',e=>onMD(e,ri,ci,td));
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  fixHeight();
+}
+
+function showCell(td,r,c){
+  if(edt&&edt.r===r&&edt.c===c)return;
+  const raw=calcVal(r,c);
+  const isNum=raw!==''&&!isNaN(parseFloat(String(raw).replace(/,/g,'')));
+  td.textContent=raw===''?'':(isNum?fmtN(raw):String(raw));
+  td.style.textAlign=isNum?'right':'left';
+  const hasFml=!!FMLS[addr(r,c)];
+  td.classList.toggle('fml',hasFml);
+  td.title=hasFml?FMLS[addr(r,c)]:'';
+  td.classList.toggle('sel',!!(sel&&sel.r===r&&sel.c===c));
+}
+
+function refreshAll(){ document.querySelectorAll('td.cell').forEach(td=>{ const r=+td.dataset.r,c=+td.dataset.c; if(!isNaN(r)&&!isNaN(c))showCell(td,r,c); }); }
+function tdOf(r,c){ return document.querySelector(`td.cell[data-r="${r}"][data-c="${c}"]`); }
+function fixHeight(){ ST.height(document.body.scrollHeight+24); }
+
+function colResize(e,th){
+  e.preventDefault(); const sx=e.clientX, sw=th.offsetWidth;
+  const mv=me=>th.style.minWidth=Math.max(60,sw+me.clientX-sx)+'px';
+  const up=()=>{ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); };
+  document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+}
+
+// ─────────────────────────────────────────────
+// Selection
+// ─────────────────────────────────────────────
+function selCell(r,c){
+  document.querySelectorAll('td.cell.sel').forEach(t=>t.classList.remove('sel'));
+  sel={r,c};
+  const td=tdOf(r,c); if(td)td.classList.add('sel');
+  document.getElementById('addr-box').textContent=addr(r,c);
+  if(!edt){ const fi=document.getElementById('formula-input'); fi.value=rawInput(r,c); fi.classList.toggle('fm',fi.value.startsWith('=')); }
+}
+
+// ─────────────────────────────────────────────
+// Editing
+// ─────────────────────────────────────────────
+function startEdit(r,c,ch){
+  if(edt){ if(edt.r===r&&edt.c===c)return; commitEdit(edt.r,edt.c,edt.inp.value); }
+  const td=tdOf(r,c); if(!td)return;
+  selCell(r,c);
+  const initV=(ch!==undefined&&ch!==null)?ch:rawInput(r,c);
+  td.textContent=''; td.classList.add('editing');
+  const inp=document.createElement('input');
+  inp.type='text'; inp.value=initV; inp.autocomplete='off'; inp.spellcheck=false;
+  td.appendChild(inp);
+  edt={r,c,td,inp};
+  fMode=initV.startsWith('='); setFM(fMode);
+  const fi=document.getElementById('formula-input'); fi.value=initV; fi.classList.toggle('fm',fMode);
+  inp.addEventListener('input',()=>{ fMode=inp.value.startsWith('='); setFM(fMode); fi.value=inp.value; fi.classList.toggle('fm',fMode); });
+  inp.addEventListener('keydown',onEK);
+  inp.focus(); inp.setSelectionRange(inp.value.length,inp.value.length);
+}
+
+function setFM(on){ fMode=on; document.body.classList.toggle('fm-active',on); }
+
+function commitEdit(r,c,v){
+  if(!edt||edt.r!==r||edt.c!==c)return;
+  clrHL(); setFM(false);
+  edt.td.classList.remove('editing'); edt=null;
+  v=String(v).trim();
+  const a=addr(r,c);
+  ROWS[r][COLS[c]]=v;
+  if(v.startsWith('='))FMLS[a]=v; else delete FMLS[a];
+  setHF(r,c,v);
+  refreshAll();
+  const fi=document.getElementById('formula-input'); fi.value=v; fi.classList.remove('fm');
+  selCell(r,c);
+  send();
+}
+
+function cancelEdit(){
+  if(!edt)return; clrHL(); setFM(false);
+  const{r,c,td}=edt; td.classList.remove('editing'); edt=null;
+  showCell(td,r,c); selCell(r,c);
+  const fi=document.getElementById('formula-input'); fi.value=rawInput(r,c); fi.classList.toggle('fm',fi.value.startsWith('='));
+}
+
+function clrHL(){ document.querySelectorAll('td.cell.ref-hl').forEach(t=>t.classList.remove('ref-hl')); }
+
+// ─────────────────────────────────────────────
+// Mouse
+// ─────────────────────────────────────────────
+function onMD(e,r,c,td){
+  if(fMode&&edt&&!(edt.r===r&&edt.c===c)){ e.preventDefault(); insertRef(addr(r,c),r,c); return; }
+  if(edt&&(edt.r!==r||edt.c!==c)) commitEdit(edt.r,edt.c,edt.inp.value);
+  selCell(r,c);
+}
+document.getElementById('tbody').addEventListener('dblclick',e=>{ const td=e.target.closest('td.cell'); if(td)startEdit(+td.dataset.r,+td.dataset.c,undefined); });
+
+function insertRef(ref,r,c){
+  const inp=edt?edt.inp:document.getElementById('formula-input');
+  const pos=inp.selectionStart??inp.value.length;
+  const before=inp.value.substring(0,pos).replace(/[A-Z]+\d*$/i,'');
+  const after=inp.value.substring(inp.selectionEnd??pos);
+  inp.value=before+ref+after;
+  const np=before.length+ref.length; inp.setSelectionRange(np,np); inp.focus();
+  if(inp!==document.getElementById('formula-input')) document.getElementById('formula-input').value=inp.value;
+  clrHL(); const t=tdOf(r,c); if(t)t.classList.add('ref-hl');
+}
+
+// ─────────────────────────────────────────────
+// Keyboard (editing)
+// ─────────────────────────────────────────────
+function onEK(e){
+  const{r,c}=edt;
+  if(e.key==='Enter'){e.preventDefault();commitEdit(r,c,edt.inp.value);if(r+1<ROWS.length)selCell(r+1,c);}
+  else if(e.key==='Tab'){e.preventDefault();commitEdit(r,c,edt.inp.value);const nc=c+1<COLS.length?c+1:0;selCell(c+1<COLS.length?r:Math.min(r+1,ROWS.length-1),nc);}
+  else if(e.key==='Escape'){e.preventDefault();cancelEdit();}
+  else if(!fMode){
+    if(e.key==='ArrowUp'){e.preventDefault();commitEdit(r,c,edt.inp.value);if(r>0)selCell(r-1,c);}
+    if(e.key==='ArrowDown'){e.preventDefault();commitEdit(r,c,edt.inp.value);if(r+1<ROWS.length)selCell(r+1,c);}
+  }
+}
+
+// Keyboard (navigation)
+document.addEventListener('keydown',e=>{
+  if(edt)return; if(!sel)return;
+  const{r,c}=sel;
+  if(e.key==='ArrowUp'&&r>0){selCell(r-1,c);e.preventDefault();}
+  else if(e.key==='ArrowDown'&&r<ROWS.length-1){selCell(r+1,c);e.preventDefault();}
+  else if(e.key==='ArrowLeft'&&c>0){selCell(r,c-1);e.preventDefault();}
+  else if(e.key==='ArrowRight'&&c<COLS.length-1){selCell(r,c+1);e.preventDefault();}
+  else if(e.key==='F2'||e.key==='Enter'){startEdit(r,c,undefined);e.preventDefault();}
+  else if(e.key==='Delete'||e.key==='Backspace'){
+    e.preventDefault(); ROWS[r][COLS[c]]=''; delete FMLS[addr(r,c)]; setHF(r,c,'');
+    refreshAll(); document.getElementById('formula-input').value=''; send();
+  }
+  else if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&e.key.length===1){e.preventDefault();startEdit(r,c,e.key);}
+});
+
+// ─────────────────────────────────────────────
+// Formula bar
+// ─────────────────────────────────────────────
+const FI=document.getElementById('formula-input');
+FI.addEventListener('focus',()=>{ if(sel&&!edt)startEdit(sel.r,sel.c,undefined); });
+FI.addEventListener('input',()=>{ fMode=FI.value.startsWith('='); FI.classList.toggle('fm',fMode); setFM(fMode); if(edt)edt.inp.value=FI.value; });
+FI.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();if(edt)commitEdit(edt.r,edt.c,FI.value);FI.blur();}
+  else if(e.key==='Escape'){e.preventDefault();if(edt)cancelEdit();FI.blur();}
+});
+
+// ─────────────────────────────────────────────
+// Send to Streamlit
+// ─────────────────────────────────────────────
+function send(){
+  const rows=ROWS.map((row,ri)=>{ const r={}; COLS.forEach((col,ci)=>{ r[col]=FMLS[addr(ri,ci)]??(row[col]??''); }); return r; });
+  ST.value({columns:COLS,rows,values:calcAll()});
+}
+
+// ─────────────────────────────────────────────
+// Apply data (from file or render message)
+// ─────────────────────────────────────────────
+function applyData(d){
+  if(!d)return;
+  const p=typeof d==='string'?JSON.parse(d):d;
+  COLS=p.columns||[];
+  ROWS=(p.rows||[]).map(row=>{ const r={}; COLS.forEach(c=>{r[c]=String(row[c]??'');}); return r; });
+  initHF(); buildGrid();
+  if(ROWS.length>0&&COLS.length>0)selCell(0,0);
+  fixHeight();
+}
+
+// ─────────────────────────────────────────────
+// Boot: fetch data.json (primary) + render msg (fallback)
+// ─────────────────────────────────────────────
+async function boot(){
+  ST.ready();
+  try{
+    const r=await fetch('./data.json?t='+Date.now(),{cache:'no-store'});
+    if(r.ok){ const d=await r.json(); applyData(d); return; }
+  }catch(e){ console.warn('data.json fetch failed',e); }
+  // render message fallback handled by window.addEventListener above
+}
+
+boot();
+</script>
+</body>
+</html>

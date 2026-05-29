@@ -418,6 +418,127 @@ details summary {{
     align-items: center;
     justify-content: flex-end;
 }}
+/* ─── 年次計画 スプレッドシート風高密度レイアウト ─── */
+[data-testid="stHorizontalBlock"] {{
+    gap: 0.06rem !important;
+}}
+[data-testid="column"] {{
+    padding: 0 0.03rem !important;
+    min-width: 0 !important;
+}}
+.np-hdr {{
+    background: {NAVY};
+    color: white;
+    font-weight: 700;
+    font-size: .78rem;
+    padding: 3px 5px;
+    min-height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid {NAVY};
+    white-space: nowrap;
+}}
+.np-section {{
+    background: {NAVY};
+    color: white;
+    font-weight: 700;
+    font-size: .78rem;
+    padding: 2px 5px;
+    min-height: 22px;
+    display: flex;
+    align-items: center;
+    border: 1px solid rgba(26,58,92,0.5);
+}}
+.np-total {{
+    background: rgba(26,58,92,0.10);
+    color: {NAVY};
+    font-weight: 700;
+    font-size: .78rem;
+    padding: 2px 5px;
+    min-height: 22px;
+    display: flex;
+    align-items: center;
+    border: 1px solid rgba(26,58,92,0.3);
+    border-top: 1.5px solid rgba(26,58,92,0.5);
+}}
+.np-sub {{
+    background: #eff3f8;
+    color: {NAVY};
+    font-weight: 600;
+    font-size: .78rem;
+    padding: 2px 5px 2px 10px;
+    min-height: 22px;
+    display: flex;
+    align-items: center;
+    border: 1px solid #d0dcea;
+}}
+.np-item {{
+    background: white;
+    color: #333;
+    font-size: .78rem;
+    padding: 2px 5px 2px 16px;
+    min-height: 22px;
+    display: flex;
+    align-items: center;
+    border: 1px solid #e2eaf4;
+}}
+.np-empty {{
+    background: white;
+    min-height: 22px;
+    border: 1px solid #e8eef6;
+}}
+.np-val {{
+    background: #f8f9fa;
+    color: {NAVY};
+    font-weight: 600;
+    font-size: .78rem;
+    padding: 2px 5px;
+    min-height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    border: 1px solid #d5e1ee;
+    white-space: nowrap;
+}}
+.np-val-total {{
+    background: rgba(26,58,92,0.07);
+    color: {NAVY};
+    font-weight: 700;
+    font-size: .78rem;
+    padding: 2px 5px;
+    min-height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    border: 1px solid rgba(26,58,92,0.3);
+    border-top: 1.5px solid rgba(26,58,92,0.5);
+    white-space: nowrap;
+}}
+.np-title {{
+    font-size: .88rem;
+    font-weight: 700;
+    color: {NAVY};
+    margin: 0 0 0.1rem 0;
+    padding: 0;
+}}
+/* テキスト入力をスプレッドシートセル風に */
+div[data-testid="stTextInput"] input {{
+    border-radius: 0 !important;
+    padding: 2px 5px !important;
+    min-height: 22px !important;
+    font-size: .78rem !important;
+    height: 22px !important;
+    box-sizing: border-box !important;
+}}
+div[data-testid="stTextInput"] > div {{
+    margin: 0 !important;
+    padding: 0 !important;
+}}
+div[data-testid="stTextInput"] {{
+    margin: 0 !important;
+    padding: 0 !important;
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -438,6 +559,35 @@ BS_YEAR_COLS = [
 
 _BS_SKIP = {'貸借対照表', '0年目', '１年目', '２年目', '３年目', '４年目', '５年目',
             '実績値', '計画値', '見込値'}
+
+
+@st.cache_data(ttl=60)
+def _detect_nenji_boundaries(_v: int = 0) -> tuple:
+    """年次計画シートのBS・PL区切り行をスキャンで動的に検出する。
+    E〜J列(年度値列)に _BS_SKIP の年度ラベルが出現する行をセクション区切りとみなす。
+    Returns: (bs_row, pl_row, pl_end_row)
+      BSスキャン: range(bs_row, pl_row)
+      PLスキャン: range(pl_row, pl_end_row)
+    """
+    ws = gsheets.GSheetWS('年次計画', data_only=True)
+    _yr_set = {v for v in _BS_SKIP if v != '貸借対照表'}
+
+    sep: list[int] = []
+    for r in range(1, min(ws.max_row + 1, 300)):
+        for col in range(5, 11):
+            v = ws.cell(r, col).value
+            if v is not None and str(v).strip() in _yr_set:
+                sep.append(r)
+                break
+    ws.close()
+
+    sep = sorted(set(sep))
+    if len(sep) >= 3:
+        return sep[0], sep[1], sep[2]
+    if len(sep) == 2:
+        return sep[0], sep[1], sep[1] + 50
+    return 2, 31, 67
+
 
 # 年次計画シートの初期BS構造: (C列ラベル, D列ラベル)
 _BS_INIT_ITEMS = [
@@ -473,11 +623,13 @@ def init_bs_sheet() -> None:
 
 def _load_bs_interactive():
     """年次計画シートを読み込み、数式情報付きで行データを返す"""
+    _nv = st.session_state.get('_nenji_ver', 0)
+    _bs_row, _pl_row, _ = _detect_nenji_boundaries(_nv)
     ws_v = gsheets.GSheetWS('年次計画', data_only=True)
     ws_f = gsheets.GSheetWS('年次計画', data_only=False)
 
     rows = []
-    for r in range(2, 31):
+    for r in range(_bs_row, _pl_row):
         b_val = ws_v.cell(r, 2).value
         c_val = ws_v.cell(r, 3).value
         d_val = ws_v.cell(r, 4).value
@@ -543,6 +695,7 @@ def _save_to_excel_bs(row_idx: int, col_idx: int, key: str) -> None:
         write_input_to_excel_bs(row_idx, col_idx, val)
         _recalc_nenji_local()
         load_bs.clear()
+        _detect_nenji_boundaries.clear()
         load_pl.clear()
         load_sales.clear()
     except Exception:
@@ -576,54 +729,50 @@ def _safe_num(v, fmt: str = ',.0f') -> str:
 
 
 def render_bs_interactive(rows: list, calc_results: dict) -> None:
-    """貸借対照表をデフォルト仕様で描画（B/C/D列 + 年度列）"""
+    """貸借対照表をスプレッドシート風高密度デザインで描画"""
     if not rows:
-        st.info('データがありません。Excelの年次計画シートに値を入力・保存後、「反映」ボタンを押してください。')
+        st.info('データがありません。')
         return
 
     yr_labels = [yr for _, yr in BS_YEAR_COLS]
-    # B列, C列, D列 + 年度列
     COL_W = [0.8, 1.0, 1.2] + [1.0] * len(yr_labels)
-    _EMPTY = f'<div style="min-height:32px;background:white;border-bottom:1px solid #f0f0f0;"></div>'
 
-    # ── ヘッダー行 ──
-    hdr = st.columns(COL_W)
+    hdr = st.columns(COL_W, gap="small")
     for i in range(3):
-        hdr[i].markdown('<div class="yp-hdr">&nbsp;</div>', unsafe_allow_html=True)
+        hdr[i].markdown('<div class="np-hdr">&nbsp;</div>', unsafe_allow_html=True)
     for ci, yr in enumerate(yr_labels):
-        hdr[ci + 3].markdown(
-            f'<div class="yp-hdr-yr">{_he(yr)}</div>',
-            unsafe_allow_html=True,
-        )
+        hdr[ci + 3].markdown(f'<div class="np-hdr">{_he(yr)}</div>', unsafe_allow_html=True)
 
     for row in rows:
         label = row['label']
         rtype = row['type']
-        rc = st.columns(COL_W)
+        rc = st.columns(COL_W, gap="small")
         lh = _he(label)
+        is_total = rtype in ('total', 'section')
         if rtype == 'section':
-            rc[0].markdown(f'<div class="yp-section">{lh}</div>', unsafe_allow_html=True)
-            rc[1].markdown('<div class="yp-section">&nbsp;</div>', unsafe_allow_html=True)
-            rc[2].markdown('<div class="yp-section">&nbsp;</div>', unsafe_allow_html=True)
+            rc[0].markdown(f'<div class="np-section">{lh}</div>', unsafe_allow_html=True)
+            rc[1].markdown('<div class="np-section">&nbsp;</div>', unsafe_allow_html=True)
+            rc[2].markdown('<div class="np-section">&nbsp;</div>', unsafe_allow_html=True)
         elif rtype == 'total':
-            rc[0].markdown('<div class="yp-empty"></div>', unsafe_allow_html=True)
-            rc[1].markdown(f'<div class="yp-total">{lh}</div>', unsafe_allow_html=True)
-            rc[2].markdown('<div class="yp-total">&nbsp;</div>', unsafe_allow_html=True)
+            rc[0].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
+            rc[1].markdown(f'<div class="np-total">{lh}</div>', unsafe_allow_html=True)
+            rc[2].markdown('<div class="np-total">&nbsp;</div>', unsafe_allow_html=True)
         elif rtype == 'sub':
-            rc[0].markdown('<div class="yp-empty"></div>', unsafe_allow_html=True)
-            rc[1].markdown(f'<div class="yp-sub">{lh}</div>', unsafe_allow_html=True)
-            rc[2].markdown('<div class="yp-sub">&nbsp;</div>', unsafe_allow_html=True)
+            rc[0].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
+            rc[1].markdown(f'<div class="np-sub">{lh}</div>', unsafe_allow_html=True)
+            rc[2].markdown('<div class="np-sub">&nbsp;</div>', unsafe_allow_html=True)
         else:
-            rc[0].markdown('<div class="yp-empty"></div>', unsafe_allow_html=True)
-            rc[1].markdown('<div class="yp-empty"></div>', unsafe_allow_html=True)
-            rc[2].markdown(f'<div class="yp-item">{lh}</div>', unsafe_allow_html=True)
+            rc[0].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
+            rc[1].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
+            rc[2].markdown(f'<div class="np-item">{lh}</div>', unsafe_allow_html=True)
 
+        val_css = 'np-val-total' if is_total else 'np-val'
         for ci, yr in enumerate(yr_labels):
             info = row['years'].get(yr, {})
             if info.get('is_formula'):
                 val = calc_results.get((label, yr))
                 disp = _safe_num(val)
-                rc[ci + 3].markdown(f'<div class="disp-cell">{disp}</div>', unsafe_allow_html=True)
+                rc[ci + 3].markdown(f'<div class="{val_css}">{disp}</div>', unsafe_allow_html=True)
             else:
                 inp_key = f'bs_inp_{label}_{yr}'
                 rc[ci + 3].text_input(
@@ -639,12 +788,14 @@ def render_bs_interactive(rows: list, calc_results: dict) -> None:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _load_pl_interactive():
-    """年次計画シートの損益計算書行（31-62）を読み込み、数式情報付きで行データを返す"""
+    """年次計画シートの損益計算書行を動的に読み込み、数式情報付きで行データを返す"""
+    _nv = st.session_state.get('_nenji_ver', 0)
+    _, _pl_row, _pl_end = _detect_nenji_boundaries(_nv)
     ws_v = gsheets.GSheetWS('年次計画', data_only=True)
     ws_f = gsheets.GSheetWS('年次計画', data_only=False)
 
     rows = []
-    for r in range(31, 63):
+    for r in range(_pl_row, _pl_end):
         b_val = ws_v.cell(r, 2).value
         c_val = ws_v.cell(r, 3).value
         d_val = ws_v.cell(r, 4).value
@@ -710,6 +861,7 @@ def _save_to_excel_pl(row_idx: int, col_idx: int, key: str) -> None:
         write_input_to_excel_pl(row_idx, col_idx, val)
         _recalc_nenji_local()
         load_bs.clear()
+        _detect_nenji_boundaries.clear()
         load_pl.clear()
         load_sales.clear()
     except Exception:
@@ -728,53 +880,50 @@ def calc_from_state_pl(rows: list) -> dict:
 
 
 def render_pl_interactive(rows: list, calc_results: dict) -> None:
-    """利益計画をデフォルト仕様で描画（B/C/D列 + 年度列）"""
+    """利益計画をスプレッドシート風高密度デザインで描画"""
     if not rows:
-        st.info('データがありません。Excelの年次計画シートに値を入力・保存後、「反映」ボタンを押してください。')
+        st.info('データがありません。')
         return
 
     yr_labels = [yr for _, yr in BS_YEAR_COLS]
     COL_W = [0.8, 1.0, 1.2] + [1.0] * len(yr_labels)
 
-    hdr = st.columns(COL_W)
+    hdr = st.columns(COL_W, gap="small")
     for i in range(3):
-        hdr[i].markdown('<div class="yp-hdr">&nbsp;</div>', unsafe_allow_html=True)
+        hdr[i].markdown('<div class="np-hdr">&nbsp;</div>', unsafe_allow_html=True)
     for ci, yr in enumerate(yr_labels):
-        hdr[ci + 3].markdown(
-            f'<div class="yp-hdr-yr">{_he(yr)}</div>',
-            unsafe_allow_html=True,
-        )
+        hdr[ci + 3].markdown(f'<div class="np-hdr">{_he(yr)}</div>', unsafe_allow_html=True)
 
     for row in rows:
         label = row['label']
         rtype = row['type']
-
-        rc = st.columns(COL_W)
-
+        rc = st.columns(COL_W, gap="small")
         lh = _he(label)
+        is_total = rtype in ('total', 'section')
         if rtype == 'section':
-            rc[0].markdown(f'<div class="yp-section">{lh}</div>', unsafe_allow_html=True)
-            rc[1].markdown('<div class="yp-section">&nbsp;</div>', unsafe_allow_html=True)
-            rc[2].markdown('<div class="yp-section">&nbsp;</div>', unsafe_allow_html=True)
+            rc[0].markdown(f'<div class="np-section">{lh}</div>', unsafe_allow_html=True)
+            rc[1].markdown('<div class="np-section">&nbsp;</div>', unsafe_allow_html=True)
+            rc[2].markdown('<div class="np-section">&nbsp;</div>', unsafe_allow_html=True)
         elif rtype == 'total':
-            rc[0].markdown('<div class="yp-empty"></div>', unsafe_allow_html=True)
-            rc[1].markdown(f'<div class="yp-total">{lh}</div>', unsafe_allow_html=True)
-            rc[2].markdown('<div class="yp-total">&nbsp;</div>', unsafe_allow_html=True)
+            rc[0].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
+            rc[1].markdown(f'<div class="np-total">{lh}</div>', unsafe_allow_html=True)
+            rc[2].markdown('<div class="np-total">&nbsp;</div>', unsafe_allow_html=True)
         elif rtype == 'sub':
-            rc[0].markdown('<div class="yp-empty"></div>', unsafe_allow_html=True)
-            rc[1].markdown(f'<div class="yp-sub">{lh}</div>', unsafe_allow_html=True)
-            rc[2].markdown('<div class="yp-sub">&nbsp;</div>', unsafe_allow_html=True)
-        else:  # item
-            rc[0].markdown('<div class="yp-empty"></div>', unsafe_allow_html=True)
-            rc[1].markdown('<div class="yp-empty"></div>', unsafe_allow_html=True)
-            rc[2].markdown(f'<div class="yp-item">{lh}</div>', unsafe_allow_html=True)
+            rc[0].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
+            rc[1].markdown(f'<div class="np-sub">{lh}</div>', unsafe_allow_html=True)
+            rc[2].markdown('<div class="np-sub">&nbsp;</div>', unsafe_allow_html=True)
+        else:
+            rc[0].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
+            rc[1].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
+            rc[2].markdown(f'<div class="np-item">{lh}</div>', unsafe_allow_html=True)
 
+        val_css = 'np-val-total' if is_total else 'np-val'
         for ci, yr in enumerate(yr_labels):
             info = row['years'].get(yr, {})
             if info.get('is_formula'):
                 val = calc_results.get((label, yr))
                 disp = _safe_num(val)
-                rc[ci + 3].markdown(f'<div class="disp-cell">{disp}</div>', unsafe_allow_html=True)
+                rc[ci + 3].markdown(f'<div class="{val_css}">{disp}</div>', unsafe_allow_html=True)
             else:
                 inp_key = f'pl_inp_{label}_{yr}'
                 rc[ci + 3].text_input(
@@ -855,6 +1004,7 @@ def _save_to_excel_sales(row_idx: int, col_idx: int, key: str) -> None:
         write_input_to_excel_sales(row_idx, col_idx, val)
         _recalc_nenji_local()
         load_bs.clear()
+        _detect_nenji_boundaries.clear()
         load_pl.clear()
         load_sales.clear()
     except Exception:
@@ -1371,6 +1521,7 @@ def _recalc_nenji_local() -> None:
                         _cache_set('年次計画', info['row_idx'], info['col_idx'], res)
 
     load_bs.clear()
+    _detect_nenji_boundaries.clear()
     load_pl.clear()
     load_sales.clear()
 
@@ -1635,43 +1786,44 @@ def _render_nenji_tab():
         unsafe_allow_html=True,
     )
 
-    st.markdown(f'<div class="sec-title">{_he("貸借対照表")}</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown(f'<p class="np-title">&#128194; {_he("貸借対照表")}</p>', unsafe_allow_html=True)
 
-    _nv = st.session_state.get('_nenji_ver', 0)
-    bs_rows = load_bs(_nv)
+        _nv = st.session_state.get('_nenji_ver', 0)
+        bs_rows = load_bs(_nv)
 
-    # 入力セルの初期値を session_state に登録（未登録のときだけ Excel 値でカンマ表記初期化）
-    for _row in bs_rows:
-        _label = _row['label']
-        for _yr, _info in _row['years'].items():
-            if not _info['is_formula']:
-                _k = f"bs_inp_{_label}_{_yr}"
-                if _k not in st.session_state:
-                    try:
-                        st.session_state[_k] = f"{float(_info.get('value') or 0):,.0f}"
-                    except (TypeError, ValueError):
-                        st.session_state[_k] = '0'
+        for _row in bs_rows:
+            _label = _row['label']
+            for _yr, _info in _row['years'].items():
+                if not _info['is_formula']:
+                    _k = f"bs_inp_{_label}_{_yr}"
+                    if _k not in st.session_state:
+                        try:
+                            st.session_state[_k] = f"{float(_info.get('value') or 0):,.0f}"
+                        except (TypeError, ValueError):
+                            st.session_state[_k] = '0'
 
-    calc_results_bs = calc_from_state_bs(bs_rows)
-    render_bs_interactive(bs_rows, calc_results_bs)
+        calc_results_bs = calc_from_state_bs(bs_rows)
+        render_bs_interactive(bs_rows, calc_results_bs)
 
-    st.markdown(f'<div class="sec-title">{_he("利益計画")}</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown(f'<p class="np-title">&#128200; {_he("利益計画")}</p>', unsafe_allow_html=True)
 
-    pl_rows = load_pl(_nv)
+        pl_rows = load_pl(_nv)
 
-    for _row in pl_rows:
-        _label = _row['label']
-        for _yr, _info in _row['years'].items():
-            if not _info['is_formula']:
-                _k = f"pl_inp_{_label}_{_yr}"
-                if _k not in st.session_state:
-                    try:
-                        st.session_state[_k] = f"{float(_info.get('value') or 0):,.0f}"
-                    except (TypeError, ValueError):
-                        st.session_state[_k] = '0'
+        for _row in pl_rows:
+            _label = _row['label']
+            for _yr, _info in _row['years'].items():
+                if not _info['is_formula']:
+                    _k = f"pl_inp_{_label}_{_yr}"
+                    if _k not in st.session_state:
+                        try:
+                            st.session_state[_k] = f"{float(_info.get('value') or 0):,.0f}"
+                        except (TypeError, ValueError):
+                            st.session_state[_k] = '0'
 
-    calc_results_pl = calc_from_state_pl(pl_rows)
-    render_pl_interactive(pl_rows, calc_results_pl)
+        calc_results_pl = calc_from_state_pl(pl_rows)
+        render_pl_interactive(pl_rows, calc_results_pl)
 
     st.markdown(f'<div class="sec-title">{_he("商品別販売計画")}</div>', unsafe_allow_html=True)
 
@@ -2509,6 +2661,7 @@ def _render_tab2():
         read_cell_map.clear()
         get_formula_df.clear()
         load_bs.clear()
+        _detect_nenji_boundaries.clear()
         load_pl.clear()
         load_sales.clear()
         load_monthly_full.clear()

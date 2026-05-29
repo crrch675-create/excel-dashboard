@@ -8,6 +8,103 @@ import html as _html_mod
 import threading
 from datetime import datetime
 import gsheets
+import time as _time
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# グローバルインメモリキャッシュ
+# 全APIコールをなくし、バックグラウンドで10秒ごとに自動同期する
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_OrigGSheetWS = gsheets.GSheetWS  # モンキーパッチ前に保存
+
+_SHEETS_CFG = [
+    ('年次計画',                  True, True ),
+    ('月次計画',                  True, False),
+    ('値上げ効果計算表',           True, False),
+    ('収益構造シミュレーション ', True, False),
+    ('ロジック',                  True, True ),
+]
+
+
+def _fetch_dict(sheet_name: str, data_only: bool) -> dict:
+    ws = _OrigGSheetWS(sheet_name, data_only=data_only)
+    result = ws.to_dict()
+    ws.close()
+    return result
+
+
+def _load_all(store: dict) -> None:
+    for sname, do_v, do_f in _SHEETS_CFG:
+        try:
+            if do_v:
+                d = _fetch_dict(sname, True)
+                with store['lock']:
+                    store['data'][sname + '_v'] = d
+            if do_f:
+                d = _fetch_dict(sname, False)
+                with store['lock']:
+                    store['data'][sname + '_f'] = d
+        except Exception:
+            pass
+
+
+def _bg_loop(store: dict) -> None:
+    while True:
+        _time.sleep(10)
+        try:
+            _load_all(store)
+        except Exception:
+            pass
+
+
+@st.cache_resource
+def _get_store() -> dict:
+    store: dict = {'data': {}, 'lock': threading.Lock()}
+    _load_all(store)
+    threading.Thread(target=_bg_loop, args=(store,), daemon=True).start()
+    return store
+
+
+class _CachedWS:
+    """GSheetWSの代替。APIコールなしでメモリキャッシュから読む。"""
+
+    def __init__(self, sheet_name: str, data_only: bool = True) -> None:
+        store = _get_store()
+        key = sheet_name + ('_v' if data_only else '_f')
+        with store['lock']:
+            src = store['data'].get(key, {})
+            self._d: dict = {r: dict(c) for r, c in src.items()}
+        self._mr = max(self._d.keys(), default=0)
+        self._mc = max(
+            (max(cd.keys(), default=0) for cd in self._d.values() if cd),
+            default=0,
+        )
+
+    def cell(self, row: int, col: int):
+        return gsheets._Cell(self._d.get(row, {}).get(col))
+
+    @property
+    def max_row(self) -> int:
+        return self._mr
+
+    @property
+    def max_column(self) -> int:
+        return self._mc
+
+    def close(self) -> None:
+        pass
+
+
+gsheets.GSheetWS = _CachedWS  # type: ignore[assignment]
+
+
+def _cache_set(sheet: str, row: int, col: int, value) -> None:
+    """ユーザー入力値をメモリキャッシュに即時反映する。"""
+    store = _get_store()
+    with store['lock']:
+        store['data'].setdefault(sheet + '_v', {}).setdefault(row, {})[col] = value
+
+
 NAVY = "#1A3A5C"
 GOLD = "#C8973A"
 BG   = "#F8F9FA"
@@ -275,6 +372,44 @@ details summary {{
 .mp-0mo  {{ background:#f0f0f0; color:#555; text-align:right; font-size:.78rem; border-right:2px solid #b0b8cc; }}
 .mp-tan  {{ background:white; color:#333; text-align:right; }}
 .mp-cum  {{ background:#f4f7fc; color:#555; text-align:right; font-size:.78rem; }}
+
+/* Read-only display cell (replaces disabled text_input) */
+.disp-cell {{
+    background: #f8f9fa;
+    border: 1px solid #d0d8e8;
+    border-radius: 6px;
+    padding: .45rem .7rem;
+    font-size: .83rem;
+    color: #1A3A5C;
+    font-weight: 600;
+    text-align: right;
+    min-height: 36px;
+    line-height: 1.6;
+    white-space: nowrap;
+    overflow: hidden;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}}
+.disp-cell-total {{
+    background: rgba(26,58,92,0.08);
+    border: 1px solid rgba(26,58,92,0.2);
+    border-radius: 6px;
+    padding: .45rem .7rem;
+    font-size: .83rem;
+    color: #1A3A5C;
+    font-weight: 700;
+    text-align: right;
+    min-height: 36px;
+    line-height: 1.6;
+    white-space: nowrap;
+    overflow: hidden;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -396,8 +531,12 @@ def _save_to_excel_bs(row_idx: int, col_idx: int, key: str) -> None:
         raw = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw) if raw else 0.0
         st.session_state[key] = f'{val:,.0f}'
+        _cache_set('年次計画', row_idx, col_idx, val)
         write_input_to_excel_bs(row_idx, col_idx, val)
         _recalc_nenji_local()
+        load_bs.clear()
+        load_pl.clear()
+        load_sales.clear()
     except Exception:
         pass
 
@@ -476,9 +615,7 @@ def render_bs_interactive(rows: list, calc_results: dict) -> None:
             if info.get('is_formula'):
                 val = calc_results.get((label, yr))
                 disp = _safe_num(val)
-                k = f'bs_calc_{label}_{yr}'
-                st.session_state[k] = disp
-                rc[ci + 3].text_input('', key=k, disabled=True, label_visibility='collapsed')
+                rc[ci + 3].markdown(f'<div class="disp-cell">{disp}</div>', unsafe_allow_html=True)
             else:
                 inp_key = f'bs_inp_{label}_{yr}'
                 rc[ci + 3].text_input(
@@ -561,8 +698,12 @@ def _save_to_excel_pl(row_idx: int, col_idx: int, key: str) -> None:
         raw = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw) if raw else 0.0
         st.session_state[key] = f'{val:,.0f}'
+        _cache_set('年次計画', row_idx, col_idx, val)
         write_input_to_excel_pl(row_idx, col_idx, val)
         _recalc_nenji_local()
+        load_bs.clear()
+        load_pl.clear()
+        load_sales.clear()
     except Exception:
         pass
 
@@ -625,9 +766,7 @@ def render_pl_interactive(rows: list, calc_results: dict) -> None:
             if info.get('is_formula'):
                 val = calc_results.get((label, yr))
                 disp = _safe_num(val)
-                k = f'pl_calc_{label}_{yr}'
-                st.session_state[k] = disp
-                rc[ci + 3].text_input('', key=k, disabled=True, label_visibility='collapsed')
+                rc[ci + 3].markdown(f'<div class="disp-cell">{disp}</div>', unsafe_allow_html=True)
             else:
                 inp_key = f'pl_inp_{label}_{yr}'
                 rc[ci + 3].text_input(
@@ -704,8 +843,12 @@ def _save_to_excel_sales(row_idx: int, col_idx: int, key: str) -> None:
         raw = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw) if raw else 0.0
         st.session_state[key] = f'{val:,.0f}'
+        _cache_set('年次計画', row_idx, col_idx, val)
         write_input_to_excel_sales(row_idx, col_idx, val)
         _recalc_nenji_local()
+        load_bs.clear()
+        load_pl.clear()
+        load_sales.clear()
     except Exception:
         pass
 
@@ -769,9 +912,7 @@ def render_sales_interactive(rows: list, calc_results: dict) -> None:
                     disp = _safe_num(val, ',.2f')
                 except (TypeError, ValueError):
                     disp = '0'
-                k = f'sales_calc_{row_idx}_{yr}'
-                st.session_state[k] = disp
-                rc[ci + 3].text_input('', key=k, disabled=True, label_visibility='collapsed')
+                rc[ci + 3].markdown(f'<div class="disp-cell">{disp}</div>', unsafe_allow_html=True)
             else:
                 inp_key = f'sales_inp_{row_idx}_{yr}'
                 rc[ci + 3].text_input(
@@ -840,7 +981,7 @@ def _fv_mo(v, fmt='num'):
 
 
 @st.cache_data(ttl=15)
-def load_monthly_full(_v: int = 0):
+def load_monthly_full():
     """月次計画シートの値を読み込む（Google Sheetsが数式を評価済み）"""
     ws_v = gsheets.GSheetWS('月次計画', data_only=True)
 
@@ -869,8 +1010,9 @@ def _save_to_excel_monthly(row_idx: int, col_idx: int, key: str) -> None:
         raw_val = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw_val) if raw_val else 0.0
         st.session_state[key] = f'{val:,.0f}'
+        _cache_set('月次計画', row_idx, col_idx, val)
         gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
-        st.session_state['_monthly_dirty'] = True
+        load_monthly_full.clear()
     except Exception:
         pass
 
@@ -919,9 +1061,7 @@ def render_monthly_interactive(raw: dict, calc_res: dict) -> None:
             rc[2].markdown(f'<div class="mp-goal">{goal_v or "&nbsp;"}</div>', unsafe_allow_html=True)
             rc[3].markdown(f'<div class="mp-ltan">{_he("単月")}</div>', unsafe_allow_html=True)
             g0 = _fv_mo(calc_res.get((tan_r, 7)), fmt)
-            k0 = f'mo_disp_{tan_r}_7'
-            st.session_state[k0] = g0
-            rc[4].text_input('', key=k0, disabled=True, label_visibility='collapsed')
+            rc[4].markdown(f'<div class="disp-cell">{g0}</div>', unsafe_allow_html=True)
             for ci, c in enumerate(_MO_DATA_COLS):
                 if tan_is_input:
                     inp_key = f'mo_inp_{tan_r}_{c}'
@@ -932,9 +1072,7 @@ def render_monthly_interactive(raw: dict, calc_res: dict) -> None:
                     )
                 else:
                     v = _fv_mo(calc_res.get((tan_r, c)), fmt)
-                    dk = f'mo_disp_{tan_r}_{c}'
-                    st.session_state[dk] = v
-                    rc[5 + ci].text_input('', key=dk, disabled=True, label_visibility='collapsed')
+                    rc[5 + ci].markdown(f'<div class="disp-cell">{v}</div>', unsafe_allow_html=True)
 
         if cum_r is not None:
             rc2 = st.columns(_MO_COL_W)
@@ -949,14 +1087,10 @@ def render_monthly_interactive(raw: dict, calc_res: dict) -> None:
                 rc2[2].markdown('<div class="yp-empty"></div>', unsafe_allow_html=True)
             rc2[3].markdown(f'<div class="mp-lcum">{_he("累計")}</div>', unsafe_allow_html=True)
             g1 = _fv_mo(calc_res.get((cum_r, 7)), fmt)
-            k01 = f'mo_disp_{cum_r}_7'
-            st.session_state[k01] = g1
-            rc2[4].text_input('', key=k01, disabled=True, label_visibility='collapsed')
+            rc2[4].markdown(f'<div class="disp-cell">{g1}</div>', unsafe_allow_html=True)
             for ci, c in enumerate(_MO_DATA_COLS):
                 v2 = _fv_mo(calc_res.get((cum_r, c)), fmt)
-                dk2 = f'mo_disp_{cum_r}_{c}'
-                st.session_state[dk2] = v2
-                rc2[5 + ci].text_input('', key=dk2, disabled=True, label_visibility='collapsed')
+                rc2[5 + ci].markdown(f'<div class="disp-cell">{v2}</div>', unsafe_allow_html=True)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1206,6 +1340,7 @@ def _recalc_nenji_local() -> None:
                     if res is not None:
                         st.session_state[f'bs_calc_{lbl}_{yr}'] = f'{res:,.0f}'
                         coord[_addr(info)] = res
+                        _cache_set('年次計画', info['row_idx'], info['col_idx'], res)
 
         for row in pl_rows:
             lbl = row['label']
@@ -1215,6 +1350,7 @@ def _recalc_nenji_local() -> None:
                     if res is not None:
                         st.session_state[f'pl_calc_{lbl}_{yr}'] = f'{res:,.0f}'
                         coord[_addr(info)] = res
+                        _cache_set('年次計画', info['row_idx'], info['col_idx'], res)
 
         for row in sales_rows:
             ridx = row['row_idx']
@@ -1224,6 +1360,11 @@ def _recalc_nenji_local() -> None:
                     if res is not None:
                         st.session_state[f'sales_calc_{ridx}_{yr}'] = f'{res:,.0f}'
                         coord[_addr(info)] = res
+                        _cache_set('年次計画', info['row_idx'], info['col_idx'], res)
+
+    load_bs.clear()
+    load_pl.clear()
+    load_sales.clear()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1300,12 +1441,10 @@ with tab1:
                 info = cell_map.get((item, year), {"is_formula": False, "value": 0})
 
                 if info["is_formula"]:
-                    # 計算式セル：カンマ表記で disabled 表示
+                    # 計算式セル：カンマ表記で HTML表示
                     val = calc_results.get((item, year))
                     display_str = _safe_num(val)
-                    calc_key = f"calc_{year}_{item}"
-                    st.session_state[calc_key] = display_str
-                    st.text_input(label=item, key=calc_key, disabled=True)
+                    st.markdown(f'<div style="font-size:.85rem;font-weight:600;color:{NAVY};margin-bottom:.1rem;">{_he(item)}</div><div class="disp-cell">{display_str}</div>', unsafe_allow_html=True)
                 else:
                     # 入力セル：カンマ表記テキスト入力
                     inp_key = f"inp_{year}_{item}"
@@ -1448,8 +1587,9 @@ def _save_to_excel_cf(row_idx: int, col_idx: int, key: str) -> None:
         raw_val = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw_val) if raw_val else 0.0
         st.session_state[key] = f'{val:,.0f}'
+        _cache_set('月次計画', row_idx, col_idx, val)
         gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
-        st.session_state['_monthly_dirty'] = True
+        load_monthly_full.clear()
     except Exception:
         pass
 
@@ -1487,9 +1627,7 @@ def render_cf_interactive(raw: dict, calc_res: dict) -> None:
 
         # G col (0-month): always display-only
         g0 = _fv_mo(calc_res.get((row, 7)))
-        kg = f'cf_disp_{row}_7'
-        st.session_state[kg] = g0
-        rc[2].text_input('', key=kg, disabled=True, label_visibility='collapsed')
+        rc[2].markdown(f'<div class="disp-cell">{g0}</div>', unsafe_allow_html=True)
 
         # H-S monthly cols
         for ci, c in enumerate(_MO_DATA_COLS):
@@ -1502,9 +1640,7 @@ def render_cf_interactive(raw: dict, calc_res: dict) -> None:
                 )
             else:
                 v = _fv_mo(calc_res.get((row, c)))
-                dk = f'cf_disp_{row}_{c}'
-                st.session_state[dk] = v
-                rc[3 + ci].text_input('', key=dk, disabled=True, label_visibility='collapsed')
+                rc[3 + ci].markdown(f'<div class="disp-cell">{v}</div>', unsafe_allow_html=True)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1572,8 +1708,9 @@ def _save_to_excel_sp_pct(row_idx: int, col_idx: int, key: str) -> None:
         val_pct = float(raw_val) if raw_val else 0.0
         val_dec = val_pct / 100.0 if val_pct > 1.0 else val_pct
         st.session_state[key] = f'{val_dec * 100:.2f}%'
+        _cache_set('月次計画', row_idx, col_idx, val_dec)
         gsheets.write_cell_async('月次計画', row_idx, col_idx, val_dec)
-        st.session_state['_monthly_dirty'] = True
+        load_monthly_full.clear()
     except Exception:
         pass
 
@@ -1584,8 +1721,9 @@ def _save_to_excel_sp_num(row_idx: int, col_idx: int, key: str) -> None:
         raw_val = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw_val) if raw_val else 0.0
         st.session_state[key] = f'{val:,.0f}'
+        _cache_set('月次計画', row_idx, col_idx, val)
         gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
-        st.session_state['_monthly_dirty'] = True
+        load_monthly_full.clear()
     except Exception:
         pass
 
@@ -1622,15 +1760,11 @@ def render_sp_interactive(raw: dict, calc_res: dict) -> None:
             rc[2].markdown(f'<div class="yp-item">{_he(d_lbl) if d_lbl else "&nbsp;"}</div>', unsafe_allow_html=True)
             # E列（目標）
             e0 = _fv_mo(calc_res.get((tan_r, 5)), fmt)
-            ek = f'sp_disp_{tan_r}_5'
-            st.session_state[ek] = e0
-            rc[3].text_input('', key=ek, disabled=True, label_visibility='collapsed')
+            rc[3].markdown(f'<div class="disp-cell">{e0}</div>', unsafe_allow_html=True)
             rc[4].markdown(f'<div class="mp-ltan">{_he("当月")}</div>', unsafe_allow_html=True)
             # G col (0か月目)
             g0 = _fv_mo(calc_res.get((tan_r, 7)), fmt)
-            kg = f'sp_disp_{tan_r}_7'
-            st.session_state[kg] = g0
-            rc[5].text_input('', key=kg, disabled=True, label_visibility='collapsed')
+            rc[5].markdown(f'<div class="disp-cell">{g0}</div>', unsafe_allow_html=True)
             # H-S monthly
             for ci, c in enumerate(_MO_DATA_COLS):
                 if is_input:
@@ -1649,9 +1783,7 @@ def render_sp_interactive(raw: dict, calc_res: dict) -> None:
                         )
                 else:
                     v = _fv_mo(calc_res.get((tan_r, c)), fmt)
-                    dk = f'sp_disp_{tan_r}_{c}'
-                    st.session_state[dk] = v
-                    rc[6 + ci].text_input('', key=dk, disabled=True, label_visibility='collapsed')
+                    rc[6 + ci].markdown(f'<div class="disp-cell">{v}</div>', unsafe_allow_html=True)
 
             # ── 累計行 ──
             rc2 = st.columns(_SP_COL_W)
@@ -1660,19 +1792,13 @@ def render_sp_interactive(raw: dict, calc_res: dict) -> None:
             rc2[2].markdown('<div class="yp-empty"></div>', unsafe_allow_html=True)
             # E列（目標）累計行
             e1 = _fv_mo(calc_res.get((cum_r, 5)), fmt)
-            ek2 = f'sp_disp_{cum_r}_5'
-            st.session_state[ek2] = e1
-            rc2[3].text_input('', key=ek2, disabled=True, label_visibility='collapsed')
+            rc2[3].markdown(f'<div class="disp-cell">{e1}</div>', unsafe_allow_html=True)
             rc2[4].markdown(f'<div class="mp-lcum">{_he("累計")}</div>', unsafe_allow_html=True)
             g1 = _fv_mo(calc_res.get((cum_r, 7)), fmt)
-            kg2 = f'sp_disp_{cum_r}_7'
-            st.session_state[kg2] = g1
-            rc2[5].text_input('', key=kg2, disabled=True, label_visibility='collapsed')
+            rc2[5].markdown(f'<div class="disp-cell">{g1}</div>', unsafe_allow_html=True)
             for ci, c in enumerate(_MO_DATA_COLS):
                 v2 = _fv_mo(calc_res.get((cum_r, c)), fmt)
-                dk2 = f'sp_disp_{cum_r}_{c}'
-                st.session_state[dk2] = v2
-                rc2[6 + ci].text_input('', key=dk2, disabled=True, label_visibility='collapsed')
+                rc2[6 + ci].markdown(f'<div class="disp-cell">{v2}</div>', unsafe_allow_html=True)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1734,7 +1860,7 @@ def _fv_ne(v, is_pct: bool = False) -> str:
 
 
 @st.cache_data(ttl=15)
-def load_ne_full(_v: int = 0):
+def load_ne_full():
     ws_v = gsheets.GSheetWS('値上げ効果計算表', data_only=True)
     raw: dict = {}
     for r in range(2, 34):
@@ -1751,8 +1877,9 @@ def _save_to_excel_ne(row_idx: int, col_idx: int, key: str) -> None:
         val = float(raw_val) if raw_val else 0.0
         is_pct = _ne_is_pct(row_idx, col_idx)
         st.session_state[key] = _fv_ne(val, is_pct) or '0'
+        _cache_set('値上げ効果計算表', row_idx, col_idx, val)
         gsheets.write_cell_async('値上げ効果計算表', row_idx, col_idx, val)
-        st.session_state['_ne_dirty'] = True
+        load_ne_full.clear()
     except Exception:
         pass
 
@@ -1787,9 +1914,7 @@ def render_ne_interactive(calc_res: dict) -> None:
                 rc[ui_i].text_input('', key=key, label_visibility='collapsed',
                     on_change=_save_to_excel_ne, args=(r, c, key))
             else:
-                key = f'ne_disp_{r}_{c}'
-                st.session_state[key] = disp
-                rc[ui_i].text_input('', key=key, disabled=True, label_visibility='collapsed')
+                rc[ui_i].markdown(f'<div class="disp-cell">{_he(disp)}</div>', unsafe_allow_html=True)
 
     _render_hdr()
     for r, lbl, is_total in _NE_S1:
@@ -1867,7 +1992,7 @@ _SIM_ALL_INPUT_CELLS = _sim_build_input_cells()
 
 
 @st.cache_data(ttl=15)
-def load_sim_full(_v: int = 0):
+def load_sim_full():
     ws_v = gsheets.GSheetWS(_SIM_SHEET, data_only=True)
     raw: dict = {}
     for r in range(1, 52):
@@ -1883,8 +2008,9 @@ def _save_to_excel_sim(row: int, col: int, key: str) -> None:
         raw_val = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw_val) if raw_val else 0.0
         st.session_state[key] = f'{val:g}'
+        _cache_set(_SIM_SHEET, row, col, val)
         gsheets.write_cell_async(_SIM_SHEET, row, col, val)
-        st.session_state['_sim_dirty'] = True
+        load_sim_full.clear()
     except Exception:
         pass
 

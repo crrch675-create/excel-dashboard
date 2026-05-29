@@ -1122,6 +1122,8 @@ def render_sales_interactive(rows: list, calc_results: dict) -> None:
             f'<div class="yp-hdr-yr">{_he(yr)}</div>',
             unsafe_allow_html=True)
 
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+
     for row in rows:
         label = row['label']
         rtype = row['type']

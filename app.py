@@ -718,7 +718,7 @@ def _load_bs_interactive():
             label = c_str
             rtype = 'sub' if str(c_val or '').startswith('　') else 'total'
         else:
-            label, rtype = '', 'item'  # 年度列にデータがあるが行ラベルなし
+            continue  # B/C/D全て空かつ年度列にもデータなし → スキップ
 
         year_vals = {}
         for col, yr in _year_cols:
@@ -768,13 +768,13 @@ def _save_to_excel_bs(row_idx: int, col_idx: int, key: str) -> None:
 
 
 def calc_from_state_bs(rows: list) -> dict:
-    """Google Sheetsが計算済みの数式セル値を返す"""
+    """Google Sheetsが計算済みの数式セル値を返す（キーは row_idx で一意）"""
     result_map: dict[tuple, float | None] = {}
     for row in rows:
-        label = row['label']
+        ridx = row['row_idx']
         for yr, info in row['years'].items():
             if info['is_formula']:
-                result_map[(label, yr)] = info['value']
+                result_map[(ridx, yr)] = info['value']
     return result_map
 
 
@@ -833,14 +833,15 @@ def render_bs_interactive(rows: list, calc_results: dict) -> None:
             rc[2].markdown(f'<div class="np-item">{lh}</div>', unsafe_allow_html=True)
 
         val_css = 'np-val-total' if is_total else 'np-val'
+        row_idx = row['row_idx']
         for ci, yr in enumerate(yr_labels):
             info = row['years'].get(yr, {})
             if info.get('is_formula'):
-                val = calc_results.get((label, yr))
+                val = calc_results.get((row_idx, yr))
                 disp = _safe_num(val)
                 rc[ci + 3].markdown(f'<div class="{val_css}">{disp}</div>', unsafe_allow_html=True)
             else:
-                inp_key = f'bs_inp_{label}_{yr}'
+                inp_key = f'bs_inp_{row_idx}_{yr}'
                 rc[ci + 3].text_input(
                     '', key=inp_key,
                     label_visibility='collapsed',
@@ -891,7 +892,7 @@ def _load_pl_interactive():
             label = c_str
             rtype = 'sub' if str(c_val or '').startswith('　') else 'total'
         else:
-            label, rtype = '', 'item'
+            continue
 
         year_vals = {}
         for col, yr in _year_cols:
@@ -941,13 +942,13 @@ def _save_to_excel_pl(row_idx: int, col_idx: int, key: str) -> None:
 
 
 def calc_from_state_pl(rows: list) -> dict:
-    """Google Sheetsが計算済みの数式セル値を返す"""
+    """Google Sheetsが計算済みの数式セル値を返す（キーは row_idx で一意）"""
     result_map: dict[tuple, float | None] = {}
     for row in rows:
-        label = row['label']
+        ridx = row['row_idx']
         for yr, info in row['years'].items():
             if info['is_formula']:
-                result_map[(label, yr)] = info['value']
+                result_map[(ridx, yr)] = info['value']
     return result_map
 
 
@@ -990,14 +991,15 @@ def render_pl_interactive(rows: list, calc_results: dict) -> None:
             rc[2].markdown(f'<div class="np-item">{lh}</div>', unsafe_allow_html=True)
 
         val_css = 'np-val-total' if is_total else 'np-val'
+        row_idx = row['row_idx']
         for ci, yr in enumerate(yr_labels):
             info = row['years'].get(yr, {})
             if info.get('is_formula'):
-                val = calc_results.get((label, yr))
+                val = calc_results.get((row_idx, yr))
                 disp = _safe_num(val)
                 rc[ci + 3].markdown(f'<div class="{val_css}">{disp}</div>', unsafe_allow_html=True)
             else:
-                inp_key = f'pl_inp_{label}_{yr}'
+                inp_key = f'pl_inp_{row_idx}_{yr}'
                 rc[ci + 3].text_input(
                     '', key=inp_key,
                     label_visibility='collapsed',
@@ -1538,19 +1540,19 @@ def _recalc_nenji_local() -> None:
 
     # 入力セルと既存の数式セルの値をcoordマップに収集
     for row in bs_rows:
-        lbl = row['label']
+        ridx = row['row_idx']
         for yr, info in row['years'].items():
             if not info.get('col_idx'):
                 continue
-            key = f'bs_calc_{lbl}_{yr}' if info['is_formula'] else f'bs_inp_{lbl}_{yr}'
+            key = f'bs_calc_{ridx}_{yr}' if info['is_formula'] else f'bs_inp_{ridx}_{yr}'
             coord[_addr(info)] = _fv(st.session_state.get(key, '0'))
 
     for row in pl_rows:
-        lbl = row['label']
+        ridx = row['row_idx']
         for yr, info in row['years'].items():
             if not info.get('col_idx'):
                 continue
-            key = f'pl_calc_{lbl}_{yr}' if info['is_formula'] else f'pl_inp_{lbl}_{yr}'
+            key = f'pl_calc_{ridx}_{yr}' if info['is_formula'] else f'pl_inp_{ridx}_{yr}'
             coord[_addr(info)] = _fv(st.session_state.get(key, '0'))
 
     for row in sales_rows:
@@ -1564,22 +1566,22 @@ def _recalc_nenji_local() -> None:
     # 数式セルを2パスで評価（依存チェーン対応）
     for _ in range(2):
         for row in bs_rows:
-            lbl = row['label']
+            ridx = row['row_idx']
             for yr, info in row['years'].items():
                 if info.get('is_formula') and info.get('formula'):
                     res = _eval_formula(info['formula'], coord)
                     if res is not None:
-                        st.session_state[f'bs_calc_{lbl}_{yr}'] = f'{res:,.0f}'
+                        st.session_state[f'bs_calc_{ridx}_{yr}'] = f'{res:,.0f}'
                         coord[_addr(info)] = res
                         _cache_set('年次計画', info['row_idx'], info['col_idx'], res)
 
         for row in pl_rows:
-            lbl = row['label']
+            ridx = row['row_idx']
             for yr, info in row['years'].items():
                 if info.get('is_formula') and info.get('formula'):
                     res = _eval_formula(info['formula'], coord)
                     if res is not None:
-                        st.session_state[f'pl_calc_{lbl}_{yr}'] = f'{res:,.0f}'
+                        st.session_state[f'pl_calc_{ridx}_{yr}'] = f'{res:,.0f}'
                         coord[_addr(info)] = res
                         _cache_set('年次計画', info['row_idx'], info['col_idx'], res)
 
@@ -1866,10 +1868,10 @@ def _render_nenji_tab():
         bs_rows = load_bs(_nv)
 
         for _row in bs_rows:
-            _label = _row['label']
+            _ridx = _row['row_idx']
             for _yr, _info in _row['years'].items():
                 if not _info['is_formula']:
-                    _k = f"bs_inp_{_label}_{_yr}"
+                    _k = f"bs_inp_{_ridx}_{_yr}"
                     if _k not in st.session_state:
                         try:
                             st.session_state[_k] = f"{float(_info.get('value') or 0):,.0f}"
@@ -1885,10 +1887,10 @@ def _render_nenji_tab():
         pl_rows = load_pl(_nv)
 
         for _row in pl_rows:
-            _label = _row['label']
+            _ridx = _row['row_idx']
             for _yr, _info in _row['years'].items():
                 if not _info['is_formula']:
-                    _k = f"pl_inp_{_label}_{_yr}"
+                    _k = f"pl_inp_{_ridx}_{_yr}"
                     if _k not in st.session_state:
                         try:
                             st.session_state[_k] = f"{float(_info.get('value') or 0):,.0f}"

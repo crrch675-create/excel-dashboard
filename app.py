@@ -2677,7 +2677,7 @@ def _fv_s(v, pct: bool = False) -> str:
 
 
 # スプレッドシートのギャップ列 (E=5, I=9, Q=17, U=21)
-_SIM_GAP_COLS = frozenset({5, 9, 17, 21})
+_SIM_GAP_COLS = frozenset({5, 9, 13, 17, 21})
 
 # 太字合計行のオフセット (各グループ base からの相対行)
 _SIM_TOTAL_OFFSETS = frozenset({10, 12})

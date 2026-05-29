@@ -72,6 +72,15 @@ class GSheetWS:
     def close(self):
         pass
 
+    def to_dict(self) -> dict:
+        """Convert rows to {1-based-row: {1-based-col: value}} dict."""
+        result: dict[int, dict[int, object]] = {}
+        for r_idx, row in enumerate(self._rows, 1):
+            for c_idx, v in enumerate(row, 1):
+                if v != '' and v is not None:
+                    result.setdefault(r_idx, {})[c_idx] = v
+        return result
+
 
 def write_cell(sheet_name: str, row: int, col: int, value, force: bool = False) -> None:
     """Write a value to a cell. force=True skips the formula pre-check (saves 1 API call)."""

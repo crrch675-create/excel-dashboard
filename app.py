@@ -2688,13 +2688,11 @@ _SIM_LABEL_COLS = frozenset(_SIM_HBLOCK_COL_STARTS)  # {2,6,10,14,18,22}
 # スプレッドシート列1-24 → st.columns 幅リスト
 def _sim_col_widths() -> list:
     w = []
-    for c in range(1, 25):
-        if c == 1:
-            w.append(1.6)   # 項目ラベル列
-        elif c in _SIM_GAP_COLS:
+    for c in range(2, 25):  # col 1（項目列）を除外
+        if c in _SIM_GAP_COLS:
             w.append(0.12)  # ギャップ列
         elif c in _SIM_LABEL_COLS:
-            w.append(0.55)  # ブロック内ラベル列（横表示に十分な幅）
+            w.append(0.55)  # ブロック内ラベル列
         else:
             w.append(0.72)  # データ列
     return w
@@ -2707,7 +2705,7 @@ def _render_sim_header_rows(raw: dict) -> None:
     """ブロック名ヘッダー行2行を描画する（各グループの先頭で呼ぶ）。"""
 
     def _pos(col: int) -> int:
-        return col - 1
+        return col - 2  # col 1 削除のため -2
 
     def _gap_cells(cols_obj):
         for gc in _SIM_GAP_COLS:
@@ -2715,7 +2713,6 @@ def _render_sim_header_rows(raw: dict) -> None:
 
     # ヘッダー行1: ブロック名
     h1 = st.columns(_SIM_COL_W)
-    h1[_pos(1)].markdown(f'<div class="np-hdr">{_he("項目")}</div>', unsafe_allow_html=True)
     _gap_cells(h1)
     for cs in _SIM_LABEL_COLS:
         h1[_pos(cs)].markdown('<div class="np-hdr">&nbsp;</div>', unsafe_allow_html=True)
@@ -2729,7 +2726,6 @@ def _render_sim_header_rows(raw: dict) -> None:
 
     # ヘッダー行2: 金額 / 増減等
     h2 = st.columns(_SIM_COL_W)
-    h2[_pos(1)].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
     _gap_cells(h2)
     for cs in _SIM_LABEL_COLS:
         h2[_pos(cs)].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
@@ -2748,7 +2744,7 @@ def _render_sim_sheet(raw: dict, calc_res: dict) -> None:
     """スプレッドシートの行・列構造をそのまま再現して描画する。"""
 
     def _pos(col: int) -> int:
-        return col - 1
+        return col - 2  # col 1 削除のため -2
 
     def _gap_cells(cols_obj):
         for gc in _SIM_GAP_COLS:
@@ -2780,12 +2776,12 @@ def _render_sim_sheet(raw: dict, calc_res: dict) -> None:
                 continue
             row_data = raw.get(r, {})
 
-            # 空行チェック
+            # 空行チェック（col 2以降で判定）
             has_content = any(
                 row_data.get(c) is not None
                 and str(row_data.get(c, '')).strip() not in ('', )
                 and not str(row_data.get(c, '')).startswith('#')
-                for c in range(1, 25)
+                for c in range(2, 25)
             )
             if not has_content:
                 st.markdown('<div style="height:5px"></div>', unsafe_allow_html=True)
@@ -2793,17 +2789,7 @@ def _render_sim_sheet(raw: dict, calc_res: dict) -> None:
 
             is_total = any(r == base + off for off in _SIM_TOTAL_OFFSETS)
 
-            label_val = row_data.get(1)
-            label_str = str(label_val).strip() if label_val is not None else ''
-
             rc = st.columns(_SIM_COL_W)
-
-            # 項目ラベル列
-            if label_str:
-                lbl_css = 'np-total' if is_total else 'np-sub'
-                rc[_pos(1)].markdown(f'<div class="{lbl_css}">{_he(label_str)}</div>', unsafe_allow_html=True)
-            else:
-                rc[_pos(1)].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
 
             _gap_cells(rc)
 
@@ -2818,7 +2804,7 @@ def _render_sim_sheet(raw: dict, calc_res: dict) -> None:
                     if v_str and not v_str.startswith('#'):
                         rc[_pos(c)].markdown(
                             f'<div style="background:#eff3f8;color:{NAVY};font-size:.75rem;'
-                            f'font-weight:600;padding:2px 4px;min-height:22px;display:flex;'
+                            f'font-weight:600;padding:.45rem .7rem;min-height:36px;display:flex;'
                             f'align-items:center;white-space:nowrap;overflow:hidden;">'
                             f'{_he(v_str)}</div>', unsafe_allow_html=True)
                     else:
@@ -2828,10 +2814,10 @@ def _render_sim_sheet(raw: dict, calc_res: dict) -> None:
                     rc[_pos(c)].text_input('', key=inp_key, label_visibility='collapsed',
                                            on_change=_save_to_excel_sim, args=(r, c, inp_key))
                 elif v_str == '' or v_str.startswith('#'):
-                    val_css = 'np-val-total' if is_total else 'np-val'
+                    val_css = 'disp-cell-total' if is_total else 'disp-cell'
                     rc[_pos(c)].markdown(f'<div class="{val_css}"></div>', unsafe_allow_html=True)
                 else:
-                    val_css = 'np-val-total' if is_total else 'np-val'
+                    val_css = 'disp-cell-total' if is_total else 'disp-cell'
                     rc[_pos(c)].markdown(f'<div class="{val_css}">{_fv_s(v)}</div>', unsafe_allow_html=True)
 
 

@@ -5,6 +5,7 @@ import streamlit as st
 import pandas as pd
 import re
 import html as _html_mod
+import threading
 from datetime import datetime
 import gsheets
 NAVY = "#1A3A5C"
@@ -380,12 +381,13 @@ def _load_bs_interactive():
     return rows
 
 
-def load_bs():
+@st.cache_data(ttl=60)
+def load_bs(_v: int = 0):
     return _load_bs_interactive()
 
 
 def write_input_to_excel_bs(row_idx: int, col_idx: int, value: float) -> None:
-    gsheets.write_cell('年次計画', row_idx, col_idx, value)
+    gsheets.write_cell_async('年次計画', row_idx, col_idx, value)
 
 
 def _save_to_excel_bs(row_idx: int, col_idx: int, key: str) -> None:
@@ -395,6 +397,7 @@ def _save_to_excel_bs(row_idx: int, col_idx: int, key: str) -> None:
         val = float(raw) if raw else 0.0
         st.session_state[key] = f'{val:,.0f}'
         write_input_to_excel_bs(row_idx, col_idx, val)
+        _recalc_nenji_local()
     except Exception:
         pass
 
@@ -543,12 +546,13 @@ def _load_pl_interactive():
     return rows
 
 
-def load_pl():
+@st.cache_data(ttl=60)
+def load_pl(_v: int = 0):
     return _load_pl_interactive()
 
 
 def write_input_to_excel_pl(row_idx: int, col_idx: int, value: float) -> None:
-    gsheets.write_cell('年次計画', row_idx, col_idx, value)
+    gsheets.write_cell_async('年次計画', row_idx, col_idx, value)
 
 
 def _save_to_excel_pl(row_idx: int, col_idx: int, key: str) -> None:
@@ -558,6 +562,7 @@ def _save_to_excel_pl(row_idx: int, col_idx: int, key: str) -> None:
         val = float(raw) if raw else 0.0
         st.session_state[key] = f'{val:,.0f}'
         write_input_to_excel_pl(row_idx, col_idx, val)
+        _recalc_nenji_local()
     except Exception:
         pass
 
@@ -685,12 +690,13 @@ def _load_sales_interactive():
     return rows
 
 
-def load_sales():
+@st.cache_data(ttl=60)
+def load_sales(_v: int = 0):
     return _load_sales_interactive()
 
 
 def write_input_to_excel_sales(row_idx: int, col_idx: int, value: float) -> None:
-    gsheets.write_cell('年次計画', row_idx, col_idx, value)
+    gsheets.write_cell_async('年次計画', row_idx, col_idx, value)
 
 
 def _save_to_excel_sales(row_idx: int, col_idx: int, key: str) -> None:
@@ -699,6 +705,7 @@ def _save_to_excel_sales(row_idx: int, col_idx: int, key: str) -> None:
         val = float(raw) if raw else 0.0
         st.session_state[key] = f'{val:,.0f}'
         write_input_to_excel_sales(row_idx, col_idx, val)
+        _recalc_nenji_local()
     except Exception:
         pass
 
@@ -832,8 +839,8 @@ def _fv_mo(v, fmt='num'):
         return str(v)
 
 
-@st.cache_data(ttl=30)
-def load_monthly_full():
+@st.cache_data(ttl=15)
+def load_monthly_full(_v: int = 0):
     """月次計画シートの値を読み込む（Google Sheetsが数式を評価済み）"""
     ws_v = gsheets.GSheetWS('月次計画', data_only=True)
 
@@ -862,8 +869,8 @@ def _save_to_excel_monthly(row_idx: int, col_idx: int, key: str) -> None:
         raw_val = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw_val) if raw_val else 0.0
         st.session_state[key] = f'{val:,.0f}'
-        gsheets.write_cell('月次計画', row_idx, col_idx, val)
-        load_monthly_full.clear()
+        gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
+        st.session_state['_monthly_dirty'] = True
     except Exception:
         pass
 
@@ -1146,6 +1153,79 @@ def python_eval_formulas() -> dict[tuple, float | None]:
     return {k: v["value"] for k, v in cell_map.items()}
 
 
+def _recalc_nenji_local() -> None:
+    """年次計画の数式セルをsession_stateの値からローカル評価して即時更新する。"""
+    v = st.session_state.get('_nenji_ver', 0)
+    bs_rows = load_bs(v)
+    pl_rows = load_pl(v)
+    sales_rows = load_sales(v)
+
+    coord: dict[str, float] = {}
+
+    def _addr(info: dict) -> str:
+        return gsheets.get_column_letter(info['col_idx']) + str(info['row_idx'])
+
+    def _fv(s: str) -> float:
+        try:
+            return float(str(s).replace(',', '').replace('%', ''))
+        except Exception:
+            return 0.0
+
+    # 入力セルと既存の数式セルの値をcoordマップに収集
+    for row in bs_rows:
+        lbl = row['label']
+        for yr, info in row['years'].items():
+            if not info.get('col_idx'):
+                continue
+            key = f'bs_calc_{lbl}_{yr}' if info['is_formula'] else f'bs_inp_{lbl}_{yr}'
+            coord[_addr(info)] = _fv(st.session_state.get(key, '0'))
+
+    for row in pl_rows:
+        lbl = row['label']
+        for yr, info in row['years'].items():
+            if not info.get('col_idx'):
+                continue
+            key = f'pl_calc_{lbl}_{yr}' if info['is_formula'] else f'pl_inp_{lbl}_{yr}'
+            coord[_addr(info)] = _fv(st.session_state.get(key, '0'))
+
+    for row in sales_rows:
+        ridx = row['row_idx']
+        for yr, info in row['years'].items():
+            if not info.get('col_idx'):
+                continue
+            key = f'sales_calc_{ridx}_{yr}' if info['is_formula'] else f'sales_inp_{ridx}_{yr}'
+            coord[_addr(info)] = _fv(st.session_state.get(key, '0'))
+
+    # 数式セルを2パスで評価（依存チェーン対応）
+    for _ in range(2):
+        for row in bs_rows:
+            lbl = row['label']
+            for yr, info in row['years'].items():
+                if info.get('is_formula') and info.get('formula'):
+                    res = _eval_formula(info['formula'], coord)
+                    if res is not None:
+                        st.session_state[f'bs_calc_{lbl}_{yr}'] = f'{res:,.0f}'
+                        coord[_addr(info)] = res
+
+        for row in pl_rows:
+            lbl = row['label']
+            for yr, info in row['years'].items():
+                if info.get('is_formula') and info.get('formula'):
+                    res = _eval_formula(info['formula'], coord)
+                    if res is not None:
+                        st.session_state[f'pl_calc_{lbl}_{yr}'] = f'{res:,.0f}'
+                        coord[_addr(info)] = res
+
+        for row in sales_rows:
+            ridx = row['row_idx']
+            for yr, info in row['years'].items():
+                if info.get('is_formula') and info.get('formula'):
+                    res = _eval_formula(info['formula'], coord)
+                    if res is not None:
+                        st.session_state[f'sales_calc_{ridx}_{yr}'] = f'{res:,.0f}'
+                        coord[_addr(info)] = res
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ダッシュボード用関数
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1155,7 +1235,7 @@ def _save_to_excel(item: str, year: str, key: str) -> None:
         raw = str(st.session_state.get(key) or "0").replace(",", "")
         val = float(raw) if raw else 0.0
         st.session_state[key] = f"{val:,.0f}"
-        write_input_to_excel(item, year, val)
+        threading.Thread(target=write_input_to_excel, args=(item, year, val), daemon=True).start()
     except Exception:
         pass
 
@@ -1262,7 +1342,8 @@ def _render_nenji_tab():
 
     st.markdown(f'<div class="sec-title">{_he("貸借対照表")}</div>', unsafe_allow_html=True)
 
-    bs_rows = load_bs()
+    _nv = st.session_state.get('_nenji_ver', 0)
+    bs_rows = load_bs(_nv)
 
     # 入力セルの初期値を session_state に登録（未登録のときだけ Excel 値でカンマ表記初期化）
     for _row in bs_rows:
@@ -1281,7 +1362,7 @@ def _render_nenji_tab():
 
     st.markdown(f'<div class="sec-title">{_he("利益計画")}</div>', unsafe_allow_html=True)
 
-    pl_rows = load_pl()
+    pl_rows = load_pl(_nv)
 
     for _row in pl_rows:
         _label = _row['label']
@@ -1299,7 +1380,7 @@ def _render_nenji_tab():
 
     st.markdown(f'<div class="sec-title">{_he("商品別販売計画")}</div>', unsafe_allow_html=True)
 
-    sales_rows = load_sales()
+    sales_rows = load_sales(_nv)
 
     for _row in sales_rows:
         _ridx = _row['row_idx']
@@ -1367,8 +1448,8 @@ def _save_to_excel_cf(row_idx: int, col_idx: int, key: str) -> None:
         raw_val = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw_val) if raw_val else 0.0
         st.session_state[key] = f'{val:,.0f}'
-        gsheets.write_cell('月次計画', row_idx, col_idx, val)
-        load_monthly_full.clear()
+        gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
+        st.session_state['_monthly_dirty'] = True
     except Exception:
         pass
 
@@ -1475,12 +1556,11 @@ def _save_to_excel_sp(row_idx: int, col_idx: int, key: str) -> None:
     try:
         raw_val = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw_val) if raw_val else 0.0
-        # 粗利益率は小数で保存（0.75形式）
         if '_pct_' in key:
             val = val / 100.0 if val > 1.0 else val
         st.session_state[key] = f'{val:,.0f}' if '_pct_' not in key else f'{val * 100:.2f}%'
-        gsheets.write_cell('月次計画', row_idx, col_idx, val)
-        load_monthly_full.clear()
+        gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
+        st.session_state['_monthly_dirty'] = True
     except Exception:
         pass
 
@@ -1492,8 +1572,8 @@ def _save_to_excel_sp_pct(row_idx: int, col_idx: int, key: str) -> None:
         val_pct = float(raw_val) if raw_val else 0.0
         val_dec = val_pct / 100.0 if val_pct > 1.0 else val_pct
         st.session_state[key] = f'{val_dec * 100:.2f}%'
-        gsheets.write_cell('月次計画', row_idx, col_idx, val_dec)
-        load_monthly_full.clear()
+        gsheets.write_cell_async('月次計画', row_idx, col_idx, val_dec)
+        st.session_state['_monthly_dirty'] = True
     except Exception:
         pass
 
@@ -1504,8 +1584,8 @@ def _save_to_excel_sp_num(row_idx: int, col_idx: int, key: str) -> None:
         raw_val = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw_val) if raw_val else 0.0
         st.session_state[key] = f'{val:,.0f}'
-        gsheets.write_cell('月次計画', row_idx, col_idx, val)
-        load_monthly_full.clear()
+        gsheets.write_cell_async('月次計画', row_idx, col_idx, val)
+        st.session_state['_monthly_dirty'] = True
     except Exception:
         pass
 
@@ -1653,8 +1733,8 @@ def _fv_ne(v, is_pct: bool = False) -> str:
         return ''
 
 
-@st.cache_data(ttl=30)
-def load_ne_full():
+@st.cache_data(ttl=15)
+def load_ne_full(_v: int = 0):
     ws_v = gsheets.GSheetWS('値上げ効果計算表', data_only=True)
     raw: dict = {}
     for r in range(2, 34):
@@ -1671,8 +1751,8 @@ def _save_to_excel_ne(row_idx: int, col_idx: int, key: str) -> None:
         val = float(raw_val) if raw_val else 0.0
         is_pct = _ne_is_pct(row_idx, col_idx)
         st.session_state[key] = _fv_ne(val, is_pct) or '0'
-        gsheets.write_cell('値上げ効果計算表', row_idx, col_idx, val)
-        load_ne_full.clear()
+        gsheets.write_cell_async('値上げ効果計算表', row_idx, col_idx, val)
+        st.session_state['_ne_dirty'] = True
     except Exception:
         pass
 
@@ -1786,8 +1866,8 @@ def _sim_build_input_cells() -> frozenset:
 _SIM_ALL_INPUT_CELLS = _sim_build_input_cells()
 
 
-@st.cache_data(ttl=30)
-def load_sim_full():
+@st.cache_data(ttl=15)
+def load_sim_full(_v: int = 0):
     ws_v = gsheets.GSheetWS(_SIM_SHEET, data_only=True)
     raw: dict = {}
     for r in range(1, 52):
@@ -1803,8 +1883,8 @@ def _save_to_excel_sim(row: int, col: int, key: str) -> None:
         raw_val = str(st.session_state.get(key) or '0').replace(',', '')
         val = float(raw_val) if raw_val else 0.0
         st.session_state[key] = f'{val:g}'
-        gsheets.write_cell(_SIM_SHEET, row, col, val)
-        load_sim_full.clear()
+        gsheets.write_cell_async(_SIM_SHEET, row, col, val)
+        st.session_state['_sim_dirty'] = True
     except Exception:
         pass
 
@@ -2124,9 +2204,14 @@ with tab2:
     if st.button("🔄　スプレッドシートの変更を今すぐ反映", use_container_width=False, key="btn_admin_reload"):
         read_cell_map.clear()
         get_formula_df.clear()
+        load_bs.clear()
+        load_pl.clear()
+        load_sales.clear()
         load_monthly_full.clear()
         load_ne_full.clear()
         load_sim_full.clear()
+        _nv = st.session_state.get('_nenji_ver', 0) + 1
+        st.session_state['_nenji_ver'] = _nv
         for _k in list(st.session_state.keys()):
             if (_k.startswith('bs_inp_') or _k.startswith('bs_calc_') or
                     _k.startswith('pl_inp_') or _k.startswith('pl_calc_') or

@@ -1,6 +1,7 @@
 """Google Sheets backend — replaces openpyxl file access."""
 import json
 import os
+import threading
 
 import gspread
 from gspread.utils import rowcol_to_a1
@@ -72,14 +73,27 @@ class GSheetWS:
         pass
 
 
-def write_cell(sheet_name: str, row: int, col: int, value) -> None:
-    """Write a value to a cell, skipping cells that contain formulas."""
+def write_cell(sheet_name: str, row: int, col: int, value, force: bool = False) -> None:
+    """Write a value to a cell. force=True skips the formula pre-check (saves 1 API call)."""
     sh = _get_spreadsheet()
     ws = sh.worksheet(sheet_name)
-    current = ws.acell(rowcol_to_a1(row, col), value_render_option="FORMULA").value
-    if isinstance(current, str) and current.startswith("="):
-        return
+    if not force:
+        current = ws.acell(rowcol_to_a1(row, col), value_render_option="FORMULA").value
+        if isinstance(current, str) and current.startswith("="):
+            return
     ws.update_cell(row, col, value)
+
+
+def _safe_write(sheet_name: str, row: int, col: int, value) -> None:
+    try:
+        write_cell(sheet_name, row, col, value, force=True)
+    except Exception:
+        pass
+
+
+def write_cell_async(sheet_name: str, row: int, col: int, value) -> None:
+    """Write to Google Sheets in a background thread (non-blocking)."""
+    threading.Thread(target=_safe_write, args=(sheet_name, row, col, value), daemon=True).start()
 
 
 def write_range(sheet_name: str, start_row: int, start_col: int, data: list[list]) -> None:

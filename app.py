@@ -2626,10 +2626,7 @@ def _render_sim_tab() -> None:
 
     calc_res = calc_sim_from_state(raw, formulas)
 
-    for g, gname in enumerate(_SIM_VGROUP_NAMES):
-        st.markdown(f'<div class="sec-title">{_he(gname)}</div>', unsafe_allow_html=True)
-        _render_sim_inputs(g, raw)
-        st.markdown('<div style="height:.4rem;"></div>', unsafe_allow_html=True)
+    for g in range(len(_SIM_VGROUP_NAMES)):
         _render_sim_group(g, calc_res)
         if g < 2:
             st.markdown('<hr class="divider">', unsafe_allow_html=True)

@@ -354,7 +354,7 @@ details summary {{
     background: {NAVY};
     color: white;
     padding: 8px 14px;
-    text-align: left;
+    text-align: right;
     font-weight: 600;
     white-space: nowrap;
 }}
@@ -366,7 +366,7 @@ details summary {{
     padding: 7px 14px;
     border-top: 1.5px solid rgba(26,58,92,0.22);
     border-bottom: 1.5px solid rgba(26,58,92,0.22);
-    text-align: left;
+    text-align: right;
 }}
 .bs-tbl .r-total td:first-child {{ text-align: left; }}
 .bs-tbl .r-sub td {{
@@ -375,14 +375,14 @@ details summary {{
     color: {NAVY};
     font-weight: 600;
     border-bottom: 1px solid #e8eaf0;
-    text-align: left;
+    text-align: right;
 }}
 .bs-tbl .r-sub td:first-child {{ text-align: left; }}
 .bs-tbl .r-item td {{
     padding: 5px 14px 5px 28px;
     color: #444;
     border-bottom: 1px solid #f0f0f0;
-    text-align: left;
+    text-align: right;
 }}
 .bs-tbl .r-item td:first-child {{ text-align: left; }}
 .bs-tbl tbody tr:hover td {{ background: {GOLD}18 !important; }}
@@ -411,12 +411,12 @@ details summary {{
 .mp-cat  {{ background:{NAVY}; color:white; font-weight:700; text-align:center; }}
 .mp-sub  {{ background:#2a5580; color:white; font-weight:600; text-align:center; }}
 .mp-sub-total {{ background:#1e3f5e; color:white; font-weight:700; text-align:center; border-top:1.5px solid {GOLD}; }}
-.mp-goal {{ background:#fef9ee; color:#5a3a00; font-weight:700; text-align:left; border-left:2px solid {GOLD}; border-right:2px solid {GOLD}; }}
+.mp-goal {{ background:#fef9ee; color:#5a3a00; font-weight:700; text-align:right; border-left:2px solid {GOLD}; border-right:2px solid {GOLD}; }}
 .mp-ltan {{ background:#dce8f8; color:{NAVY}; font-weight:700; text-align:center; font-size:.74rem; }}
 .mp-lcum {{ background:#eef2f8; color:#445; font-weight:500; text-align:center; font-size:.74rem; }}
-.mp-0mo  {{ background:#f0f0f0; color:#555; text-align:left; font-size:.78rem; border-right:2px solid #b0b8cc; }}
-.mp-tan  {{ background:white; color:#333; text-align:left; }}
-.mp-cum  {{ background:#f4f7fc; color:#555; text-align:left; font-size:.78rem; }}
+.mp-0mo  {{ background:#f0f0f0; color:#555; text-align:right; font-size:.78rem; border-right:2px solid #b0b8cc; }}
+.mp-tan  {{ background:white; color:#333; text-align:right; }}
+.mp-cum  {{ background:#f4f7fc; color:#555; text-align:right; font-size:.78rem; }}
 
 /* Read-only display cell (replaces disabled text_input) */
 .disp-cell {{
@@ -427,7 +427,7 @@ details summary {{
     font-size: .83rem;
     color: #1A3A5C;
     font-weight: 600;
-    text-align: left;
+    text-align: right;
     min-height: 36px;
     line-height: 1.6;
     white-space: nowrap;
@@ -435,7 +435,7 @@ details summary {{
     box-sizing: border-box;
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: flex-end;
 }}
 .disp-cell-total {{
     background: rgba(26,58,92,0.08);
@@ -445,7 +445,7 @@ details summary {{
     font-size: .83rem;
     color: #1A3A5C;
     font-weight: 700;
-    text-align: left;
+    text-align: right;
     min-height: 36px;
     line-height: 1.6;
     white-space: nowrap;
@@ -453,7 +453,7 @@ details summary {{
     box-sizing: border-box;
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: flex-end;
 }}
 /* ─── 年次計画 スプレッドシート風高密度レイアウト ─── */
 [data-testid="stHorizontalBlock"] {{
@@ -534,7 +534,7 @@ details summary {{
     min-height: 22px;
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: flex-end;
     border: 1px solid #d5e1ee;
     white-space: nowrap;
 }}
@@ -547,7 +547,7 @@ details summary {{
     min-height: 22px;
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: flex-end;
     border: 1px solid rgba(26,58,92,0.3);
     border-top: 1.5px solid rgba(26,58,92,0.5);
     white-space: nowrap;
@@ -589,7 +589,7 @@ div[data-testid="stTextInput"] input {{
     font-size: .83rem !important;
     box-sizing: border-box !important;
     margin: 0 !important;
-    text-align: left !important;
+    text-align: right !important;
 }}
 /* 年次計画タブ（2番目）：高密度 np-val スタイルに合わせたコンパクト入力 */
 [data-baseweb="tab-panel"]:nth-child(2) div[data-testid="stTextInput"] {{
@@ -601,7 +601,7 @@ div[data-testid="stTextInput"] input {{
     min-height: 28px !important;
     height: 28px !important;
     font-size: .78rem !important;
-    text-align: left !important;
+    text-align: right !important;
 }}
 </style>
 """, unsafe_allow_html=True)

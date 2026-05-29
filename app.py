@@ -2452,107 +2452,85 @@ def _fv_s(v, pct: bool = False) -> str:
 
 def _render_sim_group(g: int, calc_res: dict) -> None:
     base = _SIM_VGROUP_BASE_ROWS[g]
-
-    def _td(v, is_inp=False, is_pct=False, is_total=False):
-        text = _fv_s(v, pct=is_pct)
-        if is_inp:
-            style = f'background:#FFF8E6;border:1.5px solid {GOLD};font-weight:700;'
-        elif is_total:
-            style = f'background:#EBF3FA;font-weight:700;color:{NAVY};'
-        else:
-            style = 'background:transparent;'
-        return (
-            f'<td style="padding:4px 7px;text-align:right;font-size:.78rem;{style}">'
-            f'{text}</td>'
-        )
-
-    def _label_td(text, is_total=False, is_sep=False):
-        if is_sep:
-            return (
-                f'<td colspan="13" style="padding:3px 8px;font-size:.72rem;font-weight:700;'
-                f'color:{NAVY};background:#EEF2F7;border-top:1px solid {NAVY}30;">'
-                f'{_he(text)}</td>'
-            )
-        fw = '700' if is_total else '600'
-        bg = '#EBF3FA' if is_total else '#F7F9FC'
-        return (
-            f'<td style="padding:4px 8px;font-size:.78rem;font-weight:{fw};'
-            f'background:{bg};color:{NAVY};white-space:nowrap;">{_he(text)}</td>'
-        )
-
     sub_right = ['―', '増減', '削減率', '倍率', '倍率', '倍率']
+    COL_W = [1.5] + [0.75] * 12
 
-    hdr1 = f'<tr><td style="background:#F0F4F8;padding:5px 8px;font-size:.72rem;color:#888;">{_he("項目")}</td>'
-    for bname, color in zip(_SIM_HBLOCK_NAMES, _SIM_HBLOCK_COLORS):
-        hdr1 += (
-            f'<td colspan="2" style="background:{color};color:white;text-align:center;'
-            f'padding:6px 4px;font-size:.82rem;font-weight:700;">{_he(bname)}</td>'
-        )
-    hdr1 += '</tr>'
+    def _val_cell(rc_cols, ci, row, col, is_total=False):
+        if (row, col) in _SIM_ALL_INPUT_CELLS:
+            inp_key = f'sim_inp_{row}_{col}'
+            rc_cols[ci].text_input('', key=inp_key, label_visibility='collapsed',
+                                   on_change=_save_to_excel_sim, args=(row, col, inp_key))
+        else:
+            v = _fv_s(calc_res.get((row, col)))
+            css = 'np-val-total' if is_total else 'np-val'
+            rc_cols[ci].markdown(f'<div class="{css}">{v}</div>', unsafe_allow_html=True)
 
-    hdr2 = '<tr><td style="background:#F0F4F8;"></td>'
-    for color, rl in zip(_SIM_HBLOCK_COLORS, sub_right):
-        hdr2 += (
-            f'<td style="background:{color}22;color:{color};text-align:center;'
-            f'padding:2px 5px;font-size:.68rem;font-weight:600;">{_he("金額")}</td>'
-            f'<td style="background:{color}22;color:{color};text-align:center;'
-            f'padding:2px 5px;font-size:.68rem;font-weight:600;">{_he(rl)}</td>'
-        )
-    hdr2 += '</tr>'
+    # ヘッダー行1: ブロック名
+    h1 = st.columns(COL_W)
+    h1[0].markdown(f'<div class="np-hdr">{_he("項目")}</div>', unsafe_allow_html=True)
+    for bi, (bname, color) in enumerate(zip(_SIM_HBLOCK_NAMES, _SIM_HBLOCK_COLORS)):
+        ci = 1 + bi * 2
+        h1[ci].markdown(
+            f'<div style="background:{color};color:white;text-align:center;padding:6px 4px;'
+            f'font-size:.78rem;font-weight:700;min-height:24px;">{_he(bname)}</div>',
+            unsafe_allow_html=True)
+        h1[ci + 1].markdown(
+            f'<div style="background:{color};color:white;padding:6px 4px;min-height:24px;">&nbsp;</div>',
+            unsafe_allow_html=True)
 
-    param_offsets = [(2, '売上高'), (3, '単価'), (4, '数量'), (5, '変動費単価')]
-    param_rows_html = ''
-    for p_off, p_lab in param_offsets:
+    # ヘッダー行2: 金額 / 増減等
+    h2 = st.columns(COL_W)
+    h2[0].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
+    for bi, (color, rl) in enumerate(zip(_SIM_HBLOCK_COLORS, sub_right)):
+        ci = 1 + bi * 2
+        h2[ci].markdown(
+            f'<div style="background:{color}22;color:{color};text-align:center;'
+            f'padding:2px 4px;font-size:.68rem;font-weight:600;">{_he("金額")}</div>',
+            unsafe_allow_html=True)
+        h2[ci + 1].markdown(
+            f'<div style="background:{color}22;color:{color};text-align:center;'
+            f'padding:2px 4px;font-size:.68rem;font-weight:600;">{_he(rl)}</div>',
+            unsafe_allow_html=True)
+
+    # 基本パラメータ セパレータ
+    st.markdown(
+        f'<div style="padding:3px 8px;font-size:.72rem;font-weight:700;color:{NAVY};'
+        f'background:#EEF2F7;border-top:1px solid {NAVY}30;">&#9660; {_he("基本パラメータ")}</div>',
+        unsafe_allow_html=True)
+
+    for p_off, p_lab in [(2, '売上高'), (3, '単価'), (4, '数量'), (5, '変動費単価')]:
         row = base + p_off
-        param_rows_html += '<tr>' + _label_td(p_lab)
-        for col_start in _SIM_HBLOCK_COL_STARTS:
-            vc = col_start + 1
-            rc = col_start + 2
-            param_rows_html += _td(calc_res.get((row, vc)), is_inp=(row, vc) in _SIM_ALL_INPUT_CELLS)
-            param_rows_html += _td(calc_res.get((row, rc)), is_inp=(row, rc) in _SIM_ALL_INPUT_CELLS)
-        param_rows_html += '</tr>'
+        rc = st.columns(COL_W)
+        rc[0].markdown(
+            f'<div class="np-sub">{_he(p_lab)}</div>', unsafe_allow_html=True)
+        for bi, col_start in enumerate(_SIM_HBLOCK_COL_STARTS):
+            ci = 1 + bi * 2
+            _val_cell(rc, ci,     row, col_start + 1)
+            _val_cell(rc, ci + 1, row, col_start + 2)
 
-    result_defs = [
-        (8, '売上高', False),
-        (9, '変動費', False),
-        (10, '粗利益', True),
-        (11, '固定費', False),
-        (12, '経常利益', True),
+    # シナリオ結果 セパレータ
+    st.markdown(
+        f'<div style="padding:3px 8px;font-size:.72rem;font-weight:700;color:{NAVY};'
+        f'background:#EEF2F7;border-top:1px solid {NAVY}30;">&#9660; {_he("シナリオ結果")}</div>',
+        unsafe_allow_html=True)
+
+    for r_off, r_lab, is_total in [
+        (8,  '売上高',    False),
+        (9,  '変動費',    False),
+        (10, '粗利益',    True),
+        (11, '固定費',    False),
+        (12, '経常利益',  True),
         (13, '損益分岐点', False),
-        (14, 'BEP比率', False),
-    ]
-    result_rows_html = ''
-    for r_off, r_lab, is_total in result_defs:
+        (14, 'BEP比率',   False),
+    ]:
         row = base + r_off
-        result_rows_html += '<tr>' + _label_td(r_lab, is_total=is_total)
-        is_pct = r_off <= 12
-        for col_start in _SIM_HBLOCK_COL_STARTS:
-            vc = col_start + 1
-            rc = col_start + 2
-            v_val = calc_res.get((row, vc))
-            r_val = calc_res.get((row, rc))
-            result_rows_html += _td(v_val, is_inp=(row, vc) in _SIM_ALL_INPUT_CELLS, is_total=is_total)
-            if isinstance(r_val, str):
-                result_rows_html += (
-                    f'<td style="padding:4px 5px;text-align:center;font-size:.68rem;'
-                    f'color:#888;font-style:italic;">{_he(r_val)}</td>'
-                )
-            else:
-                result_rows_html += _td(r_val, is_pct=is_pct, is_total=is_total)
-        result_rows_html += '</tr>'
-
-    html = (
-        f'<div style="overflow-x:auto;margin-bottom:.5rem;">'
-        f'<table style="border-collapse:collapse;width:100%;'
-        f'font-family:\'Noto Sans JP\',sans-serif;border:2px solid {NAVY}30;">'
-        f'{hdr1}{hdr2}'
-        f'<tr>{_label_td(_he("▼ 基本パラメータ"), is_sep=True)}</tr>'
-        f'{param_rows_html}'
-        f'<tr>{_label_td(_he("▼ シナリオ結果"), is_sep=True)}</tr>'
-        f'{result_rows_html}'
-        f'</table></div>'
-    )
-    st.markdown(html, unsafe_allow_html=True)
+        rc = st.columns(COL_W)
+        css_lbl = 'np-total' if is_total else 'np-sub'
+        rc[0].markdown(f'<div class="{css_lbl}">{_he(r_lab)}</div>', unsafe_allow_html=True)
+        for bi, col_start in enumerate(_SIM_HBLOCK_COL_STARTS):
+            ci = 1 + bi * 2
+            _val_cell(rc, ci,     row, col_start + 1, is_total=is_total)
+            _val_cell(rc, ci + 1, row, col_start + 2, is_total=is_total)
 
 
 def _render_sim_inputs(g: int, raw: dict) -> None:

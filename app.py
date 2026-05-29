@@ -1287,10 +1287,14 @@ def render_monthly_interactive(raw: dict, calc_res: dict) -> None:
     for i, m in enumerate(_MO_MONTHS):
         hdr[4 + i].markdown(f'<div class="yp-hdr-yr">{_he(m)}</div>', unsafe_allow_html=True)
 
+    _MO_DIVIDER_BEFORE = {28, 29, 38, 42}
+
     _sentinel = object()
     prev_cat: object = _sentinel
 
     for (cat, sub, tan_r, cum_r, goal_r, fmt, tan_is_input) in _MO_ITEMS:
+        if goal_r in _MO_DIVIDER_BEFORE:
+            st.markdown('<hr style="border:none;border-top:1.5px solid #b8c8de;margin:2px 0;">', unsafe_allow_html=True)
         show_cat = cat is not None and cat != prev_cat
         if cat is not None:
             prev_cat = cat

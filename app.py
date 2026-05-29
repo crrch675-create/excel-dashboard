@@ -1114,7 +1114,14 @@ def render_sales_interactive(rows: list, calc_results: dict) -> None:
     yr_labels = [yr for _, yr in BS_YEAR_COLS]
     COL_W = [0.8, 1.0, 1.2] + [1.0] * len(yr_labels)
 
-    first_hdr = True
+    hdr = st.columns(COL_W)
+    for i in range(3):
+        hdr[i].markdown('<div class="yp-hdr">&nbsp;</div>', unsafe_allow_html=True)
+    for ci, yr in enumerate(yr_labels):
+        hdr[ci + 3].markdown(
+            f'<div class="yp-hdr-yr">{_he(yr)}</div>',
+            unsafe_allow_html=True)
+
     for row in rows:
         label = row['label']
         rtype = row['type']
@@ -1124,15 +1131,6 @@ def render_sales_interactive(rows: list, calc_results: dict) -> None:
             if row['group_break']:
                 st.markdown('<hr class="yp-sep">', unsafe_allow_html=True)
             st.markdown(f'<div class="yp-group">{lh}</div>', unsafe_allow_html=True)
-            if first_hdr:
-                hdr = st.columns(COL_W)
-                for i in range(3):
-                    hdr[i].markdown('<div class="yp-hdr">&nbsp;</div>', unsafe_allow_html=True)
-                for ci, yr in enumerate(yr_labels):
-                    hdr[ci + 3].markdown(
-                        f'<div class="yp-hdr-yr">{_he(yr)}</div>',
-                        unsafe_allow_html=True)
-                first_hdr = False
             continue
 
         rc = st.columns(COL_W)

@@ -35,7 +35,26 @@ def _fetch_dict(sheet_name: str, data_only: bool) -> dict:
 
 
 def _bg_loop(store: dict) -> None:
-    """バックグラウンドで15秒ごとに全シートを更新する。"""
+    """起動時に全シートを即時ロードし、その後15秒ごとに更新する。"""
+    # 起動直後に数式キャッシュ(_f)を優先ロード（_recalc_*_local が依存するため）
+    for sname, do_v, do_f in _SHEETS_CFG:
+        try:
+            if do_f:
+                d = _fetch_dict(sname, False)
+                with store['lock']:
+                    store['data'][sname + '_f'] = d
+        except Exception:
+            pass
+    # 値キャッシュも即時ロード
+    for sname, do_v, do_f in _SHEETS_CFG:
+        try:
+            if do_v:
+                d = _fetch_dict(sname, True)
+                with store['lock']:
+                    store['data'][sname + '_v'] = d
+        except Exception:
+            pass
+    # 以降は15秒ごとに更新
     while True:
         _time.sleep(15)
         for sname, do_v, do_f in _SHEETS_CFG:
@@ -1784,8 +1803,24 @@ def _recalc_nenji_local() -> None:
     load_sales.clear()
 
 
+def _ensure_formula_cache(sheet_name: str) -> None:
+    """数式キャッシュが未ロードなら同期ロードする。"""
+    store = _get_store()
+    key = sheet_name + '_f'
+    with store['lock']:
+        loaded = key in store['data']
+    if not loaded:
+        try:
+            d = _fetch_dict(sheet_name, False)
+            with store['lock']:
+                store['data'][key] = d
+        except Exception:
+            pass
+
+
 def _recalc_ne_local() -> None:
     """値上げ効果計算表の数式セルをローカルで即時評価する。"""
+    _ensure_formula_cache('値上げ効果計算表')
     store = _get_store()
     with store['lock']:
         f_cache = {r: dict(c) for r, c in store['data'].get('値上げ効果計算表_f', {}).items()}
@@ -1826,6 +1861,7 @@ def _recalc_ne_local() -> None:
 
 def _recalc_sim_local() -> None:
     """収益構造シミュレーションの数式セルをローカルで即時評価する。"""
+    _ensure_formula_cache('収益構造シミュレーション ')
     store = _get_store()
     with store['lock']:
         f_cache = {r: dict(c) for r, c in store['data'].get('収益構造シミュレーション _f', {}).items()}
@@ -1866,6 +1902,7 @@ def _recalc_sim_local() -> None:
 
 def _recalc_monthly_local() -> None:
     """月次計画の数式セルをローカルで即時評価する。"""
+    _ensure_formula_cache('月次計画')
     store = _get_store()
     with store['lock']:
         f_cache = {r: dict(c) for r, c in store['data'].get('月次計画_f', {}).items()}

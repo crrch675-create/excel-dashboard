@@ -114,19 +114,21 @@ def _cache_set(sheet: str, row: int, col: int, value) -> None:
 
 
 def _sync_write_refresh(sheet_name: str, row: int, col: int, value) -> None:
-    """Google Sheetsに同期書き込みし、計算済み値を即時再取得してキャッシュを更新する。
-    これによりIF/IFERROR/ROUNDなど複雑な数式も含めて正確に反映される。"""
-    try:
-        gsheets.write_cell(sheet_name, row, col, value, force=True)
-    except Exception:
-        pass
-    try:
-        d = _fetch_dict(sheet_name, True)
-        store = _get_store()
-        with store['lock']:
-            store['data'][sheet_name + '_v'] = d
-    except Exception:
-        pass
+    """バックグラウンドでGoogle Sheetsに書き込み、完了後にシート全体を再取得してキャッシュを更新する。
+    UIはブロックしない。即時表示はローカル数式エンジンが担う。"""
+    def _worker():
+        try:
+            gsheets.write_cell(sheet_name, row, col, value, force=True)
+        except Exception:
+            pass
+        try:
+            d = _fetch_dict(sheet_name, True)
+            store = _get_store()
+            with store['lock']:
+                store['data'][sheet_name + '_v'] = d
+        except Exception:
+            pass
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 NAVY = "#1A3A5C"
@@ -773,6 +775,7 @@ def _save_to_excel_bs(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('年次計画', row_idx, col_idx, val)
         _sync_write_refresh('年次計画', row_idx, col_idx, val)
+        _recalc_nenji_local()
         load_bs.clear()
         _detect_nenji_boundaries.clear()
         _detect_year_cols.clear()
@@ -946,6 +949,7 @@ def _save_to_excel_pl(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('年次計画', row_idx, col_idx, val)
         _sync_write_refresh('年次計画', row_idx, col_idx, val)
+        _recalc_nenji_local()
         load_bs.clear()
         _detect_nenji_boundaries.clear()
         _detect_year_cols.clear()
@@ -1100,6 +1104,7 @@ def _save_to_excel_sales(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('年次計画', row_idx, col_idx, val)
         _sync_write_refresh('年次計画', row_idx, col_idx, val)
+        _recalc_nenji_local()
         load_bs.clear()
         _detect_nenji_boundaries.clear()
         _detect_year_cols.clear()
@@ -1271,7 +1276,7 @@ def _save_to_excel_monthly(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('月次計画', row_idx, col_idx, val)
         _sync_write_refresh('月次計画', row_idx, col_idx, val)
-        load_monthly_full.clear()
+        _recalc_monthly_local()
     except Exception:
         pass
 
@@ -1477,71 +1482,219 @@ def save_admin_df(df: pd.DataFrame) -> None:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _eval_formula(formula_str: str, coord_values: dict) -> float | None:
-    """
-    シンプルなExcel数式を Python で評価して数値を返す。
-    対応: 四則演算, セル参照, SUM/AVERAGE/MIN/MAX(範囲またはカンマ区切り)
-    非対応の場合は None を返す。
-    """
+    """Excel数式を再帰的に評価して数値を返す。
+    対応: 四則演算, セル参照, SUM/AVERAGE/MIN/MAX/PRODUCT,
+          IF, IFERROR, ROUND/ROUNDUP/ROUNDDOWN, ABS, INT, MOD, NOT
+    非対応または評価エラーの場合は None を返す。"""
     if not isinstance(formula_str, str) or not formula_str.startswith("="):
         return None
-    expr = formula_str[1:].upper()
-
-    def _range_vals(range_str: str) -> list[float]:
-        m = re.match(r"([A-Z]+)(\d+):([A-Z]+)(\d+)", range_str.strip())
-        if not m:
-            return []
-        c1 = gsheets.column_index_from_string(m.group(1))
-        r1, r2 = int(m.group(2)), int(m.group(4))
-        c2 = gsheets.column_index_from_string(m.group(3))
-        vals = []
-        for r in range(r1, r2 + 1):
-            for c in range(c1, c2 + 1):
-                k = gsheets.get_column_letter(c) + str(r)
-                v = coord_values.get(k, 0)
-                vals.append(float(v) if v is not None else 0.0)
-        return vals
-
-    def _parse_args(args_str: str) -> list[float]:
-        result = []
-        for part in args_str.split(","):
-            part = part.strip()
-            if ":" in part:
-                result.extend(_range_vals(part))
-            elif re.match(r"^[A-Z]+\d+$", part):
-                v = coord_values.get(part, 0)
-                result.append(float(v) if v is not None else 0.0)
-            else:
-                try:
-                    result.append(float(part))
-                except ValueError:
-                    pass
-        return result
-
-    for fn, py_fn in [
-        ("SUM",     lambda vals: sum(vals)),
-        ("AVERAGE", lambda vals: sum(vals) / len(vals) if vals else 0.0),
-        ("MIN",     lambda vals: min(vals) if vals else 0.0),
-        ("MAX",     lambda vals: max(vals) if vals else 0.0),
-    ]:
-        expr = re.sub(
-            rf"{fn}\(([^)]+)\)",
-            lambda m, f=py_fn: str(f(_parse_args(m.group(1)))),
-            expr,
-        )
-
-    def _ref(m: re.Match) -> str:
-        v = coord_values.get(m.group(0), 0)
-        return str(float(v) if v is not None else 0.0)
-
-    expr = re.sub(r"[A-Z]+\d+", _ref, expr)
-
-    # 四則演算のみ許可（セキュリティ上 eval は数字と演算子のみ）
-    if not re.match(r"^[\d\s\+\-\*\/\(\)\.eE]+$", expr):
-        return None
     try:
-        return float(eval(expr))  # noqa: S307
+        return _fe_node(formula_str[1:].strip().upper(), coord_values)
     except Exception:
         return None
+
+
+def _fe_find_close(s: str, open_idx: int) -> int:
+    """s[open_idx]='(' に対応する ')' の位置を返す。見つからなければ -1。"""
+    depth = 0
+    for i in range(open_idx, len(s)):
+        if s[i] == '(':
+            depth += 1
+        elif s[i] == ')':
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _fe_split_args(s: str) -> list[str]:
+    """括弧の入れ子を考慮してカンマ区切りの引数に分割する。"""
+    args, depth, cur = [], 0, []
+    for ch in s:
+        if ch == ',' and depth == 0:
+            args.append(''.join(cur).strip())
+            cur = []
+        else:
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+            cur.append(ch)
+    if cur:
+        args.append(''.join(cur).strip())
+    return args
+
+
+def _fe_range_vals(rng: str, coord: dict) -> list[float]:
+    """A1:B3 形式のセル範囲を数値リストに展開する。"""
+    m = re.match(r'([A-Z]+)(\d+):([A-Z]+)(\d+)', rng.strip())
+    if not m:
+        return []
+    c1 = gsheets.column_index_from_string(m.group(1))
+    r1, r2 = int(m.group(2)), int(m.group(4))
+    c2 = gsheets.column_index_from_string(m.group(3))
+    vals = []
+    for r in range(r1, r2 + 1):
+        for c in range(c1, c2 + 1):
+            v = coord.get(gsheets.get_column_letter(c) + str(r), 0)
+            try:
+                vals.append(float(v) if v is not None else 0.0)
+            except (TypeError, ValueError):
+                vals.append(0.0)
+    return vals
+
+
+def _fe_node(expr: str, coord: dict) -> float | None:
+    """式ノードを再帰的に評価する。"""
+    import math as _math
+    expr = expr.strip()
+    if not expr:
+        return 0.0
+
+    # 外側の括弧を取り除く
+    if expr.startswith('(') and _fe_find_close(expr, 0) == len(expr) - 1:
+        return _fe_node(expr[1:-1], coord)
+
+    # 関数呼び出しを左から右に順次処理して数値に置換
+    while True:
+        m = re.search(r'([A-Z]+)\(', expr)
+        if not m:
+            break
+        fn = m.group(1)
+        op = m.end() - 1          # '(' の位置
+        cp = _fe_find_close(expr, op)
+        if cp == -1:
+            return None
+        args_str = expr[op + 1:cp]
+        args_raw = _fe_split_args(args_str)
+
+        def _num_args() -> list[float]:
+            result = []
+            for a in args_raw:
+                a = a.strip()
+                if ':' in a:
+                    result.extend(_fe_range_vals(a, coord))
+                else:
+                    v = _fe_node(a, coord)
+                    result.append(v if v is not None else 0.0)
+            return result
+
+        if fn == 'IF':
+            if len(args_raw) < 2:
+                val = 0.0
+            else:
+                cond = _fe_condition(args_raw[0].strip(), coord)
+                if cond is None:
+                    cond = bool(_fe_node(args_raw[0].strip(), coord) or 0)
+                t_val = _fe_node(args_raw[1], coord) if len(args_raw) > 1 else 0.0
+                f_val = _fe_node(args_raw[2], coord) if len(args_raw) > 2 else 0.0
+                val = (t_val or 0.0) if cond else (f_val or 0.0)
+        elif fn == 'IFERROR':
+            try:
+                v = _fe_node(args_raw[0], coord) if args_raw else None
+                val = v if v is not None else (_fe_node(args_raw[1], coord) if len(args_raw) > 1 else 0.0)
+            except Exception:
+                val = _fe_node(args_raw[1], coord) if len(args_raw) > 1 else 0.0
+        elif fn == 'IFNA':
+            v = _fe_node(args_raw[0], coord) if args_raw else None
+            val = v if v is not None else (_fe_node(args_raw[1], coord) if len(args_raw) > 1 else 0.0)
+        elif fn == 'SUM':
+            val = sum(_num_args())
+        elif fn == 'AVERAGE':
+            ns = _num_args()
+            val = sum(ns) / len(ns) if ns else 0.0
+        elif fn == 'MIN':
+            ns = _num_args()
+            val = min(ns) if ns else 0.0
+        elif fn == 'MAX':
+            ns = _num_args()
+            val = max(ns) if ns else 0.0
+        elif fn == 'PRODUCT':
+            ns = _num_args()
+            r2 = 1.0
+            for n in ns:
+                r2 *= n
+            val = r2
+        elif fn in ('ROUND', 'MROUND'):
+            ns = _num_args()
+            v, d = (ns[0] if ns else 0.0), int(ns[1] if len(ns) > 1 else 0)
+            val = round(v, d)
+        elif fn == 'ROUNDUP':
+            ns = _num_args()
+            v, d = (ns[0] if ns else 0.0), int(ns[1] if len(ns) > 1 else 0)
+            f = 10 ** d
+            val = _math.ceil(v * f) / f
+        elif fn == 'ROUNDDOWN':
+            ns = _num_args()
+            v, d = (ns[0] if ns else 0.0), int(ns[1] if len(ns) > 1 else 0)
+            f = 10 ** d
+            val = _math.floor(v * f) / f
+        elif fn == 'ABS':
+            ns = _num_args()
+            val = abs(ns[0]) if ns else 0.0
+        elif fn == 'INT':
+            ns = _num_args()
+            val = float(int(ns[0])) if ns else 0.0
+        elif fn == 'MOD':
+            ns = _num_args()
+            val = (ns[0] % ns[1]) if len(ns) >= 2 and ns[1] != 0 else 0.0
+        elif fn == 'SQRT':
+            ns = _num_args()
+            val = _math.sqrt(abs(ns[0])) if ns else 0.0
+        elif fn == 'POWER':
+            ns = _num_args()
+            val = (ns[0] ** ns[1]) if len(ns) >= 2 else 0.0
+        elif fn in ('SUMIF', 'SUMIFS'):
+            val = 0.0  # 近似値として0（複雑条件は非対応）
+        elif fn == 'COUNT':
+            val = float(len([v for v in _num_args() if v != 0]))
+        elif fn == 'COUNTA':
+            val = float(len(_num_args()))
+        elif fn in ('TRUE',):
+            val = 1.0
+        elif fn in ('FALSE',):
+            val = 0.0
+        else:
+            val = 0.0  # 未対応関数は0として扱う
+
+        expr = expr[:m.start()] + str(float(val)) + expr[cp + 1:]
+
+    # セル参照を数値に置換
+    def _ref(match: re.Match) -> str:
+        v = coord.get(match.group(0), 0)
+        try:
+            return str(float(v) if v is not None else 0.0)
+        except (TypeError, ValueError):
+            return '0.0'
+
+    expr = re.sub(r'[A-Z]+\d+', _ref, expr)
+
+    # 四則演算 + 単項マイナスのみ許可
+    if re.match(r'^[\d\s\+\-\*\/\(\)\.eE]+$', expr):
+        try:
+            result = float(eval(expr))  # noqa: S307
+            return result if not (_math.isnan(result) or _math.isinf(result)) else None
+        except Exception:
+            return None
+    return None
+
+
+def _fe_condition(cond: str, coord: dict) -> bool | None:
+    """比較条件式（A1>0 など）を評価してboolを返す。"""
+    for op in ('>=', '<=', '<>', '>', '<', '='):
+        idx = cond.find(op)
+        if idx > 0:
+            lhs = _fe_node(cond[:idx].strip(), coord)
+            rhs = _fe_node(cond[idx + len(op):].strip(), coord)
+            if lhs is None or rhs is None:
+                return None
+            if op == '>':  return lhs > rhs
+            if op == '<':  return lhs < rhs
+            if op == '>=': return lhs >= rhs
+            if op == '<=': return lhs <= rhs
+            if op == '<>': return lhs != rhs
+            if op == '=':  return lhs == rhs
+    return None
 
 
 def python_eval_formulas() -> dict[tuple, float | None]:
@@ -2003,7 +2156,7 @@ def _save_to_excel_cf(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('月次計画', row_idx, col_idx, val)
         _sync_write_refresh('月次計画', row_idx, col_idx, val)
-        load_monthly_full.clear()
+        _recalc_monthly_local()
     except Exception:
         pass
 
@@ -2115,7 +2268,7 @@ def _save_to_excel_sp(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = f'{val:,.0f}' if '_pct_' not in key else f'{val * 100:.2f}%'
         _cache_set('月次計画', row_idx, col_idx, val)
         _sync_write_refresh('月次計画', row_idx, col_idx, val)
-        load_monthly_full.clear()
+        _recalc_monthly_local()
     except Exception:
         pass
 
@@ -2129,7 +2282,7 @@ def _save_to_excel_sp_pct(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = f'{val_dec * 100:.2f}%'
         _cache_set('月次計画', row_idx, col_idx, val_dec)
         _sync_write_refresh('月次計画', row_idx, col_idx, val_dec)
-        load_monthly_full.clear()
+        _recalc_monthly_local()
     except Exception:
         pass
 
@@ -2142,7 +2295,7 @@ def _save_to_excel_sp_num(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = f'{val:,.0f}'
         _cache_set('月次計画', row_idx, col_idx, val)
         _sync_write_refresh('月次計画', row_idx, col_idx, val)
-        load_monthly_full.clear()
+        _recalc_monthly_local()
     except Exception:
         pass
 
@@ -2307,6 +2460,7 @@ def _save_to_excel_ne(row_idx: int, col_idx: int, key: str) -> None:
         st.session_state[key] = _fv_ne(val, is_pct) or '0'
         _cache_set('値上げ効果計算表', row_idx, col_idx, val)
         _sync_write_refresh('値上げ効果計算表', row_idx, col_idx, val)
+        _recalc_ne_local()
         load_ne_full.clear()
     except Exception:
         pass
@@ -2445,6 +2599,7 @@ def _save_to_excel_sim(row: int, col: int, key: str) -> None:
         st.session_state[key] = f'{val:g}'
         _cache_set(_SIM_SHEET, row, col, val)
         _sync_write_refresh(_SIM_SHEET, row, col, val)
+        _recalc_sim_local()
         load_sim_full.clear()
     except Exception:
         pass

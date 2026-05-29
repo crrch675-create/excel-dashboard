@@ -415,6 +415,16 @@ def _he(text: str) -> str:
     return ''.join(f'&#{ord(c)};' if ord(c) > 127 else c for c in text)
 
 
+def _safe_num(v, fmt: str = ',.0f') -> str:
+    """Google Sheetsの値を安全に数値フォーマットして返す。変換不可なら '0'。"""
+    if v is None:
+        return '0'
+    try:
+        return f'{float(str(v).replace(",", "")):>{fmt}}'
+    except (TypeError, ValueError):
+        return '0'
+
+
 def render_bs_interactive(rows: list, calc_results: dict) -> None:
     """貸借対照表をデフォルト仕様で描画（B/C/D列 + 年度列）"""
     if not rows:
@@ -462,7 +472,7 @@ def render_bs_interactive(rows: list, calc_results: dict) -> None:
             info = row['years'].get(yr, {})
             if info.get('is_formula'):
                 val = calc_results.get((label, yr))
-                disp = f'{float(val):,.0f}' if val is not None else '0'
+                disp = _safe_num(val)
                 k = f'bs_calc_{label}_{yr}'
                 st.session_state[k] = disp
                 rc[ci + 3].text_input('', key=k, disabled=True, label_visibility='collapsed')
@@ -609,7 +619,7 @@ def render_pl_interactive(rows: list, calc_results: dict) -> None:
             info = row['years'].get(yr, {})
             if info.get('is_formula'):
                 val = calc_results.get((label, yr))
-                disp = f'{float(val):,.0f}' if val is not None else '0'
+                disp = _safe_num(val)
                 k = f'pl_calc_{label}_{yr}'
                 st.session_state[k] = disp
                 rc[ci + 3].text_input('', key=k, disabled=True, label_visibility='collapsed')
@@ -749,7 +759,7 @@ def render_sales_interactive(rows: list, calc_results: dict) -> None:
             if info.get('is_formula'):
                 val  = calc_results.get((row_idx, yr))
                 try:
-                    disp = f'{float(val):,.2f}' if val is not None else '0'
+                    disp = _safe_num(val, ',.2f')
                 except (TypeError, ValueError):
                     disp = '0'
                 k = f'sales_calc_{row_idx}_{yr}'
@@ -1212,7 +1222,7 @@ with tab1:
                 if info["is_formula"]:
                     # 計算式セル：カンマ表記で disabled 表示
                     val = calc_results.get((item, year))
-                    display_str = f"{float(val):,.0f}" if val is not None else "0"
+                    display_str = _safe_num(val)
                     calc_key = f"calc_{year}_{item}"
                     st.session_state[calc_key] = display_str
                     st.text_input(label=item, key=calc_key, disabled=True)

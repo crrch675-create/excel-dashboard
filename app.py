@@ -2146,7 +2146,11 @@ def render_sp_interactive(raw: dict, calc_res: dict) -> None:
     for i, m in enumerate(_MO_MONTHS):
         hdr[5 + i].markdown(f'<div class="yp-hdr-yr">{_he(m)}</div>', unsafe_allow_html=True)
 
+    _SP_DIVIDER_BEFORE = {103, 115, 127, 139}
+
     for gi, (name_row, subs) in enumerate(_SP_GROUPS):
+        if name_row in _SP_DIVIDER_BEFORE:
+            st.markdown('<hr style="border:none;border-top:1.5px solid #b8c8de;margin:2px 0;">', unsafe_allow_html=True)
         product_name = str(raw.get(name_row, {}).get(2) or f'商品{gi + 1}')
         is_total_group = (name_row == 139)
         grp_css = 'mp-sub-total' if is_total_group else 'yp-section'

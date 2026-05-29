@@ -1287,7 +1287,7 @@ def render_monthly_interactive(raw: dict, calc_res: dict) -> None:
     for i, m in enumerate(_MO_MONTHS):
         hdr[4 + i].markdown(f'<div class="yp-hdr-yr">{_he(m)}</div>', unsafe_allow_html=True)
 
-    _MO_DIVIDER_BEFORE = {28, 29, 38, 42}
+    _MO_DIVIDER_BEFORE = {28, 29, 30, 38, 42}
 
     _sentinel = object()
     prev_cat: object = _sentinel

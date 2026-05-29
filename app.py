@@ -11,8 +11,9 @@ import gsheets
 import time as _time
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# グローバルインメモリキャッシュ
-# 全APIコールをなくし、バックグラウンドで10秒ごとに自動同期する
+# グローバルインメモリキャッシュ（オンデマンド方式）
+# 初回アクセス時にシートをAPIからロードしてメモリに保存。
+# バックグラウンドで15秒ごとに全シートを自動更新する。
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 _OrigGSheetWS = gsheets.GSheetWS  # モンキーパッチ前に保存
@@ -33,47 +34,54 @@ def _fetch_dict(sheet_name: str, data_only: bool) -> dict:
     return result
 
 
-def _load_all(store: dict) -> None:
-    for sname, do_v, do_f in _SHEETS_CFG:
-        try:
-            if do_v:
-                d = _fetch_dict(sname, True)
-                with store['lock']:
-                    store['data'][sname + '_v'] = d
-            if do_f:
-                d = _fetch_dict(sname, False)
-                with store['lock']:
-                    store['data'][sname + '_f'] = d
-        except Exception:
-            pass
-
-
 def _bg_loop(store: dict) -> None:
+    """バックグラウンドで15秒ごとに全シートを更新する。"""
     while True:
-        _time.sleep(10)
-        try:
-            _load_all(store)
-        except Exception:
-            pass
+        _time.sleep(15)
+        for sname, do_v, do_f in _SHEETS_CFG:
+            try:
+                if do_v:
+                    d = _fetch_dict(sname, True)
+                    with store['lock']:
+                        store['data'][sname + '_v'] = d
+                if do_f:
+                    d = _fetch_dict(sname, False)
+                    with store['lock']:
+                        store['data'][sname + '_f'] = d
+            except Exception:
+                pass
 
 
 @st.cache_resource
 def _get_store() -> dict:
+    """プロセス内で共有するインメモリストア。バックグラウンドスレッドを起動。"""
     store: dict = {'data': {}, 'lock': threading.Lock()}
-    _load_all(store)
     threading.Thread(target=_bg_loop, args=(store,), daemon=True).start()
     return store
 
 
 class _CachedWS:
-    """GSheetWSの代替。APIコールなしでメモリキャッシュから読む。"""
+    """GSheetWSの代替。
+    キャッシュヒット時はメモリから即時返却。
+    キャッシュミス時は実APIで取得してキャッシュに保存（初回のみ低速）。
+    """
 
     def __init__(self, sheet_name: str, data_only: bool = True) -> None:
         store = _get_store()
         key = sheet_name + ('_v' if data_only else '_f')
+
         with store['lock']:
-            src = store['data'].get(key, {})
-            self._d: dict = {r: dict(c) for r, c in src.items()}
+            src = store['data'].get(key)  # None = 未ロード
+
+        if src is None:
+            # キャッシュミス: 実APIで取得してストアに保存
+            ws = _OrigGSheetWS(sheet_name, data_only=data_only)
+            src = ws.to_dict()
+            ws.close()
+            with store['lock']:
+                store['data'][key] = src
+
+        self._d: dict = {r: dict(c) for r, c in src.items()}
         self._mr = max(self._d.keys(), default=0)
         self._mc = max(
             (max(cd.keys(), default=0) for cd in self._d.values() if cd),

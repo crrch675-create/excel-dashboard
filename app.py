@@ -2805,7 +2805,8 @@ def _render_sim_sheet(raw: dict, calc_res: dict) -> None:
                         rc[_pos(c)].markdown(
                             f'<div style="background:#eff3f8;color:{NAVY};font-size:.75rem;'
                             f'font-weight:600;padding:.45rem .7rem;min-height:36px;display:flex;'
-                            f'align-items:center;white-space:nowrap;overflow:hidden;">'
+                            f'align-items:center;justify-content:flex-end;text-align:right;'
+                            f'white-space:nowrap;overflow:hidden;">'
                             f'{_he(v_str)}</div>', unsafe_allow_html=True)
                     else:
                         rc[_pos(c)].markdown('<div class="np-empty"></div>', unsafe_allow_html=True)
